@@ -1,0 +1,38 @@
+[package]
+name = "just-ltx-trainer"
+version = "0.1.0"
+description = "Just LTX Trainer"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "just_ltx_trainer_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-notification = "2"
+tauri-plugin-store = "2"
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+russh = "0.45"
+russh-keys = "0.45"
+async-trait = "0.1"
+anyhow = "1"
+thiserror = "1"
+shellexpand = "3"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+notify-rust = "4"
+
+[features]
+default = ["custom-protocol"]
+custom-protocol = ["tauri/custom-protocol"]
