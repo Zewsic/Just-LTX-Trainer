@@ -53,6 +53,15 @@ jobs:
           workspaces: src-tauri -> target
           key: ${{ matrix.os }}-check
 
+      # tauri::generate_context!() валидирует наличие frontendDist в
+      # compile-time. Для cargo check полноценная сборка фронта не нужна —
+      # достаточно пустой директории с index.html.
+      - name: Stub frontend dist
+        shell: bash
+        run: |
+          mkdir -p dist
+          echo "<!doctype html><html><body></body></html>" > dist/index.html
+
       - name: cargo check
         working-directory: src-tauri
         run: cargo check --locked

@@ -45,16 +45,18 @@ Open Settings first. Paste:
 <!-- SCREENSHOT: servers list + create flow -->
 ![Servers](docs/screenshots/servers.png)
 
-Hit "+ New", pick a GPU. The "Recommended" tag points to a card that handles LTX 2.3 well; "For tests only" cards are cheaper but may OOM on real training. Cost per hour is shown next to each card.
+Hit "+ New", pick a GPU. The "Recommended" tag points to a card that handles LTX 2.3 well; "For tests only" Don't use "For Testing Only" cards.
 
 After you create it, the pod card runs through a **5-step setup** automatically (packages → Python env → LTX 2.3 weights → text encoder → verify). Takes 15–25 minutes the first time. You can close the app and come back — the setup keeps going on the pod.
+
+![Servers](docs/screenshots/servers_prepare.png)
 
 When the card says **Ready** you're done here.
 
 ### 3. Dataset → Prepare — cut your clips
 
 <!-- SCREENSHOT: dataset prep tab -->
-![Dataset prepare](docs/screenshots/dataset-prep.png)
+![Dataset prepare](docs/screenshots/dataset_prep.png)
 
 Drag your source videos into the window. For each one you can write a quick description of what's happening (or leave it blank and let the captioner do it later).
 
@@ -69,9 +71,6 @@ Click **Build**. The app cuts every source into fixed-length clips with ffmpeg a
 
 ### 4. Dataset → Upload — push to the pod
 
-<!-- SCREENSHOT: upload tab -->
-![Upload](docs/screenshots/upload.png)
-
 Pick the pod you set up in step 2. Click **Upload**. Goes over `runpodctl` with a live progress bar. The card turns green when the pod has your data.
 
 #### Captions (optional, on the same screen)
@@ -84,10 +83,12 @@ If you didn't write descriptions in step 3, this is where you fix that. Pick a c
 
 Hit **Test** first to see what the model writes for one clip. Hit **Run** to caption everything.
 
+![Upload](docs/screenshots/prompts.png)
+
 ### 5. Training — train the LoRA
 
 <!-- SCREENSHOT: training settings -->
-![Training setup](docs/screenshots/training-setup.png)
+![Training setup](docs/screenshots/training.png)
 
 The settings here are picked for you based on your GPU and clip count — usually you just hit **Start**. If you want to tweak:
 
@@ -103,7 +104,7 @@ The settings here are picked for you based on your GPU and clip count — usuall
 Click **Start**. Then go make coffee — small LoRAs take ~30 min, bigger ones a few hours.
 
 <!-- SCREENSHOT: active training run with live log -->
-![Live training](docs/screenshots/training-live.png)
+![Live training](docs/screenshots/training_live.png)
 
 While it's running you see live loss / step time / ETA, plus a checkpoint list as each one lands.
 
