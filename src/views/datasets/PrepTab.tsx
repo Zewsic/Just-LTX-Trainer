@@ -12,9 +12,8 @@ import {
   ASPECT_OPTIONS,
   basename,
   buildSnapshotHash,
-  checkLocalTools,
-  installFfmpeg,
   LENGTH_OPTIONS,
+  lengthToFrames,
   LocalTools,
   Project,
   VideoEntry,
@@ -41,15 +40,15 @@ export default function PrepTab({
   onGoUpload: () => void;
 }) {
   const { t } = useTranslation();
-  const [tools, setTools] = useState<LocalTools | null>(null);
-  const [installing, setInstalling] = useState(false);
-  const [installLog, setInstallLog] = useState<string | null>(null);
+  const tasksApi = useTasks();
+  const tools = tasksApi.localTools;
+  const installing = tasksApi.installing.ffmpeg.running;
+  const installLog = tasksApi.installing.ffmpeg.log;
   const [promptFor, setPromptFor] = useState<number | null>(null);
   const [promptDraft, setPromptDraft] = useState("");
   const [dragOver, setDragOver] = useState(false);
 
   const [currentHash, setCurrentHash] = useState<string | null>(null);
-  const tasksApi = useTasks();
 
   const projectRef = useRef(project);
   useEffect(() => {
@@ -67,6 +66,7 @@ export default function PrepTab({
     };
   }, [
     project.aspect_ratio,
+    project.no_resize_video,
     project.length_seconds,
     project.overlap,
     project.videos,
@@ -80,23 +80,13 @@ export default function PrepTab({
     [project.last_build_hash, project.last_build_zip, currentHash],
   );
 
-  // Если в проекте уже отмечено, что локальный сетап готов — пропускаем проверку.
+  // Tools-state живёт в TasksProvider; провайдер сам их подгружает на старте.
   useEffect(() => {
-    if (project.local_setup_done) {
-      setTools({
-        os: "darwin",
-        has_brew: true,
-        has_ffmpeg: true,
-        has_runpodctl: false,
-        brew_path: null,
-        ffmpeg_path: null,
-        runpodctl_path: null,
-      });
-      return;
+    if (tools && tools.has_brew && tools.has_ffmpeg && !project.local_setup_done) {
+      onChange((p) => ({ ...p, local_setup_done: true }));
     }
-    checkTools();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.name]);
+  }, [tools?.has_brew, tools?.has_ffmpeg]);
 
   // Drag&drop файлов в окно
   useEffect(() => {
@@ -146,31 +136,8 @@ export default function PrepTab({
     });
   }
 
-  async function checkTools() {
-    try {
-      const r = await checkLocalTools();
-      setTools(r);
-      if (r.has_brew && r.has_ffmpeg && !project.local_setup_done) {
-        onChange((p) => ({ ...p, local_setup_done: true }));
-      }
-    } catch (e: any) {
-      setInstallLog(String(e));
-    }
-  }
-
-  async function doInstall() {
-    setInstalling(true);
-    setInstallLog(null);
-    try {
-      const out = await installFfmpeg();
-      setInstallLog(out);
-      await checkTools();
-    } catch (e: any) {
-      setInstallLog(String(e));
-    } finally {
-      setInstalling(false);
-    }
-  }
+  // doInstall теперь живёт в провайдере
+  const doInstall = () => tasksApi.installFfmpeg();
 
   async function pickVideos() {
     const sel = await openDialog({
@@ -271,20 +238,45 @@ export default function PrepTab({
             <div className="space-y-5">
               <div>
                 <SectionLabel>{t("ds.prep.aspect")}</SectionLabel>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2 items-stretch">
                   {ASPECT_OPTIONS.map((a) => (
                     <Tile
                       key={a}
-                      active={project.aspect_ratio === a}
+                      active={
+                        !project.no_resize_video &&
+                        project.aspect_ratio === a
+                      }
                       onClick={() =>
-                        onChange((p) => ({ ...p, aspect_ratio: a }))
+                        onChange((p) => ({
+                          ...p,
+                          aspect_ratio: a,
+                          no_resize_video: false,
+                        }))
                       }
                       label={a}
+                      dim={project.no_resize_video}
                     >
                       <AspectVisual ratio={a} />
                     </Tile>
                   ))}
+                  <Tile
+                    active={project.no_resize_video}
+                    onClick={() =>
+                      onChange((p) => ({
+                        ...p,
+                        no_resize_video: !p.no_resize_video,
+                      }))
+                    }
+                    label={t("ds.prep.no_resize")}
+                  >
+                    <NoResizeIcon />
+                  </Tile>
                 </div>
+                {project.no_resize_video && (
+                  <p className="text-[11px] text-neutral-500 mt-2 max-w-md leading-snug">
+                    {t("ds.prep.no_resize_hint")}
+                  </p>
+                )}
               </div>
 
               <div className="flex flex-wrap gap-x-10 gap-y-5">
@@ -302,6 +294,13 @@ export default function PrepTab({
                           sec === 3.7
                             ? t("ds.prep.length_3_7")
                             : t("ds.prep.length_5_0")
+                        }
+                        sublabel={
+                          project.no_resize_video
+                            ? t("ds.prep.frames_native")
+                            : t("ds.prep.frames_at_24", {
+                                n: lengthToFrames(sec),
+                              })
                         }
                       >
                         <ClockIcon />
@@ -490,11 +489,15 @@ function Tile({
   active,
   onClick,
   label,
+  sublabel,
+  dim,
   children,
 }: {
   active: boolean;
   onClick: () => void;
   label: string;
+  sublabel?: string;
+  dim?: boolean;
   children: React.ReactNode;
 }) {
   return (
@@ -504,12 +507,41 @@ function Tile({
         "w-[72px] h-[96px] rounded-xl border flex flex-col items-center justify-between py-3 px-2 transition " +
         (active
           ? "border-blue-500 bg-blue-500/10 text-blue-600 dark:text-blue-400"
-          : "border-black/[0.08] dark:border-white/[0.1] text-neutral-600 dark:text-neutral-300 hover:bg-black/[0.04] dark:hover:bg-white/[0.05]")
+          : (dim
+              ? "border-black/[0.05] dark:border-white/[0.06] text-neutral-400 dark:text-neutral-500 opacity-60 hover:opacity-100"
+              : "border-black/[0.08] dark:border-white/[0.1] text-neutral-600 dark:text-neutral-300 hover:bg-black/[0.04] dark:hover:bg-white/[0.05]"))
       }
     >
       <div className="flex-1 flex items-center justify-center">{children}</div>
-      <span className="text-[12px] font-medium leading-none">{label}</span>
+      <div className="flex flex-col items-center gap-0.5">
+        <span className="text-[12px] font-medium leading-none">{label}</span>
+        {sublabel && (
+          <span className="text-[10px] font-mono leading-none opacity-70">
+            {sublabel}
+          </span>
+        )}
+      </div>
     </button>
+  );
+}
+
+function NoResizeIcon() {
+  return (
+    <svg
+      width="22"
+      height="22"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <rect x="3" y="5" width="8" height="6" rx="1" />
+      <rect x="13" y="5" width="8" height="10" rx="1" />
+      <rect x="3" y="13" width="8" height="6" rx="1" />
+      <path d="M21 19h-4" />
+    </svg>
   );
 }
 

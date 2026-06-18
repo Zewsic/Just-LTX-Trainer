@@ -327,6 +327,89 @@ pub(crate) async fn exec_remote(
     Err(last_err)
 }
 
+/// Запускает `cmd` на поде и пишет `stdin` в его stdin. Используем для
+/// заливки бинарных файлов (картинки, чекпоинты) — никаких ARG_MAX-лимитов
+/// и base64-оверхеда. Возвращает stdout команды.
+pub(crate) async fn exec_remote_with_stdin(
+    host: &str,
+    port: u16,
+    user: &str,
+    keys: &[PathBuf],
+    cmd: &str,
+    stdin: &[u8],
+) -> Result<String, String> {
+    if keys.is_empty() {
+        return Err("no SSH private key available".into());
+    }
+    let mut last_err = String::new();
+    for key_path in keys {
+        match exec_one_with_stdin(host, port, user, key_path, cmd, stdin).await {
+            Ok(s) => return Ok(s),
+            Err(e) => last_err = e.to_string(),
+        }
+    }
+    Err(last_err)
+}
+
+async fn exec_one_with_stdin(
+    host: &str,
+    port: u16,
+    user: &str,
+    key_path: &std::path::Path,
+    cmd: &str,
+    stdin: &[u8],
+) -> anyhow::Result<String> {
+    let cfg = Arc::new(client::Config {
+        inactivity_timeout: Some(Duration::from_secs(120)),
+        ..<_>::default()
+    });
+    let mut session = tokio::time::timeout(
+        Duration::from_secs(15),
+        client::connect(cfg, (host, port), Handler),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("connection timeout"))??;
+    let key = russh_keys::load_secret_key(key_path, None)
+        .map_err(|e| anyhow::anyhow!("load key {}: {}", key_path.display(), e))?;
+    let authed = session
+        .authenticate_publickey(user, Arc::new(key))
+        .await?;
+    if !authed {
+        anyhow::bail!("authentication failed");
+    }
+    let mut channel = session.channel_open_session().await?;
+    channel.exec(true, cmd.as_bytes()).await?;
+    // Шлём stdin кусками — для крупных картинок (5+ MB) один data-фрейм
+    // может не пролезть (server-side window). 32 KiB — заведомо безопасно.
+    for chunk in stdin.chunks(32 * 1024) {
+        channel.data(chunk).await?;
+    }
+    channel.eof().await?;
+
+    let mut stdout: Vec<u8> = Vec::new();
+    let mut stderr: Vec<u8> = Vec::new();
+    let mut exit_code: Option<u32> = None;
+    while let Some(msg) = channel.wait().await {
+        use russh::ChannelMsg::*;
+        match msg {
+            Data { ref data } => stdout.extend_from_slice(data),
+            ExtendedData { ref data, ext } if ext == 1 => stderr.extend_from_slice(data),
+            ExitStatus { exit_status } => exit_code = Some(exit_status),
+            Eof | Close => break,
+            _ => {}
+        }
+    }
+    if exit_code.unwrap_or(0) != 0 {
+        let err = String::from_utf8_lossy(&stderr).into_owned();
+        anyhow::bail!(
+            "command exited with code {}: {}",
+            exit_code.unwrap_or(0),
+            err.trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&stdout).into_owned())
+}
+
 async fn exec_one(
     host: &str,
     port: u16,

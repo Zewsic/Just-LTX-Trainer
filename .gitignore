@@ -1,8 +1,57 @@
+# ───────────────── Node / Vite / frontend ─────────────────
 node_modules
 dist
-.DS_Store
+dist-ssr
+.vite
+*.local
+
+# Сторонние lock-файлы — оставляем только pnpm-lock.yaml.
+package-lock.json
+yarn.lock
+bun.lockb
+
+# ───────────────── Rust / Tauri ─────────────────
 src-tauri/target
+# `gen/schemas` пересоздаются на сборке — коммитить не нужно.
 src-tauri/gen
-*.log
+
+# Cargo.lock КОММИТИМ — это бинарный проект, нужна воспроизводимость.
+
+# ───────────────── secrets / env ─────────────────
 .env
-.env.local
+.env.*
+!.env.example
+
+# Tauri signing / notarization
+*.p12
+*.pem
+.tauri-private-key
+.tauri-private-key.pub
+
+# ───────────────── editors / IDE ─────────────────
+.idea
+.vscode/*
+!.vscode/extensions.json
+*.swp
+*.swo
+
+# ───────────────── OS junk ─────────────────
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+Thumbs.db
+desktop.ini
+
+# ───────────────── logs / diag ─────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ───────────────── local artefacts ─────────────────
+# Личные настройки приложения хранятся в OS app-data, но на всякий случай:
+settings.json
+*.tsbuildinfo
+.cache/

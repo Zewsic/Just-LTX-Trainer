@@ -1,14 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { Button, Card, Field, Input, Select } from "../components/ui";
+import { Button, Card, Field, Input, Select, Toggle } from "../components/ui";
 import Modal from "../components/Modal";
-import {
-  Project,
-  createProject,
-  listProjects,
-  loadProject,
-  saveProject,
-} from "../lib/projects";
+import { Project, createProject } from "../lib/projects";
+import { useTasks } from "../lib/tasks";
 import PrepTab from "./datasets/PrepTab";
 import UploadTab from "./datasets/UploadTab";
 
@@ -20,7 +15,9 @@ export default function Datasets({
   onGoTraining: () => void;
 }) {
   const { t } = useTranslation();
-  const [projects, setProjects] = useState<string[] | null>(null);
+  const tasks = useTasks();
+  const projects = tasks.projectList;
+
   const [project, setProject] = useState<Project | null>(null);
   const [tab, setTab] = useState<"prep" | "upload">("prep");
   const [createOpen, setCreateOpen] = useState(false);
@@ -35,32 +32,18 @@ export default function Datasets({
     projectRef.current = project;
   }, [project]);
 
-  // initial load
+  // первый проект из списка
   useEffect(() => {
-    (async () => {
-      try {
-        const list = await listProjects();
-        setProjects(list);
-        if (list.length > 0) {
-          const p = await loadProject(list[0]);
-          setProject(p);
-        } else {
-          setCreateOpen(true);
-        }
-      } catch (e: any) {
-        setError(String(e));
-        setProjects([]);
-      }
-    })();
-  }, []);
-
-  async function refreshList() {
-    try {
-      setProjects(await listProjects());
-    } catch (e: any) {
-      setError(String(e));
+    if (project || !projects) return;
+    if (projects.length === 0) {
+      setCreateOpen(true);
+      return;
     }
-  }
+    tasks.loadProjectByName(projects[0]).then((p) => {
+      if (p) setProject(p);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects]);
 
   function handleSelect(value: string) {
     if (value === NEW_SENTINEL) {
@@ -68,7 +51,12 @@ export default function Datasets({
       return;
     }
     if (!value || value === project?.name) return;
-    loadProject(value).then(setProject).catch((e) => setError(String(e)));
+    tasks
+      .loadProjectByName(value)
+      .then((p) => {
+        if (p) setProject(p);
+      })
+      .catch((e) => setError(String(e)));
   }
 
   async function handleCreate() {
@@ -79,13 +67,12 @@ export default function Datasets({
       setNewName("");
       setCreateOpen(false);
       setProject(p);
-      await refreshList();
+      await tasks.reloadProjectList();
     } catch (e: any) {
       setError(String(e));
     }
   }
 
-  // debounced auto-save
   function patchProject(mut: (p: Project) => Project) {
     setProject((prev) => (prev ? mut(prev) : prev));
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
@@ -93,8 +80,10 @@ export default function Datasets({
       const cur = projectRef.current;
       if (!cur) return;
       try {
-        const saved = await saveProject(cur);
-        setProject((prev) => (prev && prev.name === saved.name ? saved : prev));
+        const saved = await tasks.saveProject(cur);
+        setProject((prev) =>
+          prev && prev.name === saved.name ? saved : prev,
+        );
         setSavedFlash(true);
         window.setTimeout(() => setSavedFlash(false), 1200);
       } catch (e: any) {
@@ -128,22 +117,14 @@ export default function Datasets({
               )}
             </Select>
           </div>
-          <div className="inline-flex h-[38px] rounded-lg bg-black/[0.05] dark:bg-white/[0.06] p-0.5 text-xs">
-            {(["prep", "upload"] as const).map((id) => (
-              <button
-                key={id}
-                onClick={() => setTab(id)}
-                className={
-                  "px-4 rounded-md transition " +
-                  (tab === id
-                    ? "bg-white dark:bg-white/[0.12] shadow-sm font-medium"
-                    : "text-neutral-500 hover:text-current")
-                }
-              >
-                {t(`ds.tab_${id}`)}
-              </button>
-            ))}
-          </div>
+          <Toggle<"prep" | "upload">
+            value={tab}
+            onChange={setTab}
+            items={[
+              { id: "prep", label: t("ds.tab_prep") },
+              { id: "upload", label: t("ds.tab_upload") },
+            ]}
+          />
         </div>
         {error && (
           <p className="mt-3 text-xs text-red-500 font-mono break-all">{error}</p>
@@ -156,12 +137,8 @@ export default function Datasets({
           onChange={patchProject}
           savedFlash={savedFlash}
           onReloadProject={async () => {
-            try {
-              const fresh = await loadProject(project.name);
-              setProject(fresh);
-            } catch (e: any) {
-              setError(String(e));
-            }
+            const fresh = await tasks.loadProjectByName(project.name);
+            if (fresh) setProject(fresh);
           }}
           onGoUpload={() => setTab("upload")}
         />
@@ -170,12 +147,8 @@ export default function Datasets({
         <UploadTab
           project={project}
           onProjectReload={async () => {
-            try {
-              const fresh = await loadProject(project.name);
-              setProject(fresh);
-            } catch (e: any) {
-              setError(String(e));
-            }
+            const fresh = await tasks.loadProjectByName(project.name);
+            if (fresh) setProject(fresh);
           }}
           onGoTraining={onGoTraining}
         />

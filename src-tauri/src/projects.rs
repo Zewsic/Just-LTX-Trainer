@@ -26,6 +26,11 @@ pub struct TrainingConfig {
     #[serde(default)]
     pub steps: Option<u32>,
 
+    /// Префикс, активирующий LoRA. Подставляется в начало всех промптов
+    /// валидации; `None` — пустой/не задан.
+    #[serde(default)]
+    pub trigger_word: Option<String>,
+
     #[serde(default)]
     pub validation_prompts: Vec<String>,
     #[serde(default)]
@@ -35,6 +40,13 @@ pub struct TrainingConfig {
     pub enable_gradient_checkpointing: Option<bool>,
     #[serde(default)]
     pub load_text_encoder_in_8bit: Option<bool>,
+    #[serde(default)]
+    pub expandable_segments: Option<bool>,
+
+    /// Если задан — отправляем этот YAML на под как config.yaml без пересборки
+    /// из UI-полей. Использует только в обход TrainingSettings («raw mode»).
+    #[serde(default)]
+    pub raw_config_yaml: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default, Clone)]
@@ -53,6 +65,10 @@ pub struct Project {
     pub videos: Vec<VideoEntry>,
     #[serde(default = "default_aspect")]
     pub aspect_ratio: String,
+    /// Если true — не ресайзим/кропаем, оставляем исходные размеры и fps
+    /// каждого клипа. Сборка собирает мульти-бакетный датасет.
+    #[serde(default)]
+    pub no_resize_video: bool,
     #[serde(default = "default_length")]
     pub length_seconds: f64,
     #[serde(default)]
@@ -69,6 +85,11 @@ pub struct Project {
     /// Ключ — абсолютный путь, значение — N. Видео с N=0 в датасет не попали.
     #[serde(default)]
     pub last_build_clips: HashMap<String, u32>,
+    /// Уникальные (W,H,frames) бакеты, полученные при последней сборке. Один
+    /// элемент в режиме fixed; до пяти — в mixed. Используется как
+    /// `--resolution-buckets` при запуске обучения.
+    #[serde(default)]
+    pub last_build_buckets: Vec<[u32; 3]>,
     #[serde(default)]
     pub last_uploads: HashMap<String, UploadInfo>,
     #[serde(default)]
@@ -183,6 +204,7 @@ pub fn create_project(app: tauri::AppHandle, name: String) -> Result<Project, St
         local_setup_done: false,
         videos: Vec::new(),
         aspect_ratio: default_aspect(),
+        no_resize_video: false,
         length_seconds: default_length(),
         overlap: false,
         audio: false,
@@ -190,6 +212,7 @@ pub fn create_project(app: tauri::AppHandle, name: String) -> Result<Project, St
         last_build_zip: None,
         last_build_at: 0,
         last_build_clips: HashMap::new(),
+        last_build_buckets: Vec::new(),
         last_uploads: HashMap::new(),
         training: TrainingConfig::default(),
         created_at: 0,

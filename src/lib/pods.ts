@@ -20,6 +20,35 @@ export interface ManagedPod {
   gpu_type_id?: string;
 }
 
+export interface SshProbe {
+  ok: boolean;
+  host: string;
+  port: number;
+  user: string;
+  key_used: string | null;
+  error: string | null;
+}
+
+export interface NvidiaGpu {
+  index: number;
+  name: string;
+  driver_version: string;
+  memory_used_mb: number;
+  memory_total_mb: number;
+  power_draw_w: number | null;
+  power_limit_w: number | null;
+  temperature_c: number | null;
+  utilization_pct: number | null;
+  perf_state: string;
+}
+
+export interface NvidiaInfo {
+  driver_version: string;
+  cuda_version: string;
+  gpus: NvidiaGpu[];
+  raw: string;
+}
+
 export type PodPhase =
   | "provisioning"
   | "needs_setup" // managed + RUNNING + ltx_state == init

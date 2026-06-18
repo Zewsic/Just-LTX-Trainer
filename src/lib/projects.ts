@@ -10,6 +10,7 @@ export interface Project {
   local_setup_done: boolean;
   videos: VideoEntry[];
   aspect_ratio: string; // "16:9" | "4:3" | "1:1" | "3:4" | "9:16"
+  no_resize_video: boolean;
   length_seconds: number; // 3.7 | 5.0
   overlap: boolean;
   audio: boolean;
@@ -17,6 +18,8 @@ export interface Project {
   last_build_zip: string | null;
   last_build_at: number;
   last_build_clips: Record<string, number>;
+  /** Уникальные (W,H,frames) бакеты из последней сборки. */
+  last_build_buckets: Array<[number, number, number]>;
   last_uploads: Record<string, { hash: string; at: number }>;
   training: TrainingConfig;
   created_at: number;
@@ -29,10 +32,14 @@ export interface TrainingConfig {
   rank: number | null;
   mode: "t2v" | "i2v" | "both" | null;
   steps: number | null;
+  trigger_word: string | null;
   validation_prompts: string[];
   validation_images: string[];
   enable_gradient_checkpointing: boolean | null;
   load_text_encoder_in_8bit: boolean | null;
+  expandable_segments: boolean | null;
+  /** Если задан — UI-параметры игнорируем, шлём этот YAML как config.yaml. */
+  raw_config_yaml: string | null;
 }
 
 /** Дефолтные параметры обучения исходя из количества клипов и GPU */
@@ -55,11 +62,36 @@ export function defaultTrainingConfig(opts: {
     rank,
     mode: "both",
     steps,
+    trigger_word: null,
     validation_prompts: [],
     validation_images: [],
     enable_gradient_checkpointing: isHopperOrNewer,
     load_text_encoder_in_8bit: isHopperOrNewer,
+    expandable_segments: false,
+    raw_config_yaml: null,
   };
+}
+
+/** Маппинг aspect-ratio → (width, height) — должен совпадать с Rust-стороной. */
+export function aspectToWh(a: string): [number, number] {
+  switch (a) {
+    case "16:9":
+      return [704, 384];
+    case "4:3":
+      return [640, 480];
+    case "1:1":
+      return [512, 512];
+    case "3:4":
+      return [480, 640];
+    case "9:16":
+      return [384, 704];
+    default:
+      return [704, 384];
+  }
+}
+
+export function lengthToFrames(secs: number): number {
+  return Math.abs(secs - 3.7) < 0.05 ? 89 : 121;
 }
 
 export const RANK_OPTIONS = [16, 32, 64, 128, 256] as const;
@@ -73,6 +105,7 @@ export const STEPS_STEP = 250;
 export async function buildSnapshotHash(p: Project): Promise<string> {
   const sig = JSON.stringify({
     aspect: p.aspect_ratio,
+    no_resize: !!p.no_resize_video,
     length: p.length_seconds,
     overlap: p.overlap,
     audio: !!p.audio,
@@ -116,4 +149,12 @@ export const installRunpodctl = () => invoke<string>("install_runpodctl");
 export function basename(path: string): string {
   const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return i >= 0 ? path.slice(i + 1) : path;
+}
+
+/** Возвращает pod_id, на который последний раз заливали проект (по `at`). */
+export function lastUploadedPod(project: Project): string | null {
+  const ups = Object.entries(project.last_uploads ?? {});
+  if (ups.length === 0) return null;
+  ups.sort((a, b) => (b[1].at ?? 0) - (a[1].at ?? 0));
+  return ups[0][0];
 }

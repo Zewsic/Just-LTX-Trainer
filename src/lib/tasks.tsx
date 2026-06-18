@@ -10,16 +10,38 @@ import {
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
-import { loadManaged, ManagedPod, store } from "./pods";
-import { listProjects, loadProject, Project } from "./projects";
+import {
+  loadManaged,
+  ManagedPod,
+  NvidiaInfo,
+  Pod,
+  saveManaged,
+  SshProbe,
+  store,
+} from "./pods";
+import {
+  checkLocalTools,
+  installFfmpeg as invokeInstallFfmpeg,
+  installRunpodctl as invokeInstallRunpodctl,
+  listProjects,
+  loadProject,
+  LocalTools,
+  Project,
+  saveProject as invokeSaveProject,
+} from "./projects";
 import { parseProgress, Progress, ProgressKind } from "./progress";
+
+// ──────────────────────────────────────────────────────────────────────────
+// Public API types
+// ──────────────────────────────────────────────────────────────────────────
 
 export type TaskKind =
   | "init"
   | "caption"
   | "upload"
   | "build"
-  | "test_caption";
+  | "test_caption"
+  | "train";
 
 export interface BuildPart {
   name: string;
@@ -36,9 +58,7 @@ export interface BuildState {
   done_clips: number;
   videos_total?: number;
   videos_done: number;
-  /** clips_total per video_index, заполняется по ds_build:video */
   clips_per_video: Record<number, number>;
-  /** clips_done per video_index */
   clip_done_per_video: Record<number, number>;
   parts: BuildPart[];
   zip_path?: string;
@@ -53,14 +73,11 @@ export interface PodTask {
   project_name?: string;
   state: "running" | "failed";
   label: string;
-  /** 0..100, если можем оценить */
   progress?: number;
-  /** короткий human-label прогресса для отладки/тултипа */
   progress_label?: string;
-  step_index?: number; // 1-based, only init
+  step_index?: number;
   step_total?: number;
   step_name?: string;
-  /** Лог-буфер для live-парсинга прогресса в UI */
   log_key?: string;
   progress_kind?: ProgressKind;
 }
@@ -72,38 +89,127 @@ interface TestCaptionResult {
   video_mime?: string;
 }
 
-export interface SshProbeCached {
-  ok: boolean;
-  host: string;
-  port: number;
-  user: string;
-  key_used: string | null;
-  error: string | null;
+export interface InitStepStatus {
+  state: "pending" | "running" | "done" | "failed";
+  exit_code?: number | null;
+  log_size: number;
+}
+
+export interface InitState {
+  tmux_available: boolean;
+  steps: Record<string, InitStepStatus>;
+}
+
+export interface CaptionStatus {
+  state: "pending" | "running" | "done" | "failed";
+  exit_code?: number | null;
+  log_size: number;
+}
+
+export type TrainingPhase =
+  | "prep"
+  | "preprocess"
+  | "vram_clear"
+  | "train"
+  | "done";
+
+export interface PreprocessProgress {
+  /** "captions" | "videos" */
+  kind: string;
+  done: number;
+  total: number;
+}
+
+export interface ValidationProgress {
+  sample: number;
+  samples_total: number;
+  inf_step: number;
+  inf_total: number;
+  eta?: string | null;
+}
+
+export interface TrainingState {
+  state: "pending" | "running" | "done" | "failed";
+  log_size: number;
+  exit_code?: number | null;
+  phase?: TrainingPhase | string | null;
+  step?: number | null;
+  total_steps?: number | null;
+  eta?: string | null;
+  loss?: number | null;
+  step_time?: string | null;
+  lr?: string | null;
+  preprocess_progress?: PreprocessProgress | null;
+  validation_progress?: ValidationProgress | null;
+  validations_done: number[];
+  current_validation?: number | null;
+  error?: string | null;
+  /** "oom" | "preprocess" | "media_mismatch" | "train" | "other" */
+  error_kind?: string | null;
+}
+
+export interface InstallState {
+  running: boolean;
+  log: string | null;
 }
 
 export interface TasksApi {
+  // secrets
+  apiKey: string | null;
+  hfToken: string;
+  geminiKey: string;
+  reloadSecrets: () => Promise<void>;
+
+  // preferences
+  notificationsEnabled: boolean;
+  setNotificationsEnabled: (v: boolean) => Promise<void>;
+
+  // pods
+  pods: Map<string, Pod>;
+  managed: ManagedPod[];
+  reloadPods: () => Promise<void>;
+  setManaged: (next: ManagedPod[]) => Promise<void>;
+
+  // ssh / nvidia
+  sshProbes: Map<string, SshProbe>;
+  nvidia: Map<string, NvidiaInfo>;
+
+  // projects
+  projectList: string[] | null;
+  projects: Map<string, Project>;
+  reloadProjectList: () => Promise<void>;
+  loadProjectByName: (name: string) => Promise<Project | null>;
+  saveProject: (p: Project) => Promise<Project>;
+
+  // local tools
+  localTools: LocalTools | null;
+  installing: Record<"ffmpeg" | "runpodctl", InstallState>;
+  reloadLocalTools: () => Promise<void>;
+  installFfmpeg: () => Promise<void>;
+  installRunpodctl: () => Promise<void>;
+
+  // tasks
   tasks: PodTask[];
   byPod: Map<string, PodTask[]>;
-  sshProbes: Map<string, SshProbeCached>;
-  getSshProbe: (pod_id: string) => SshProbeCached | null;
   builds: Map<string, BuildState>;
+  initStates: Map<string, InitState>;
+  captionStatuses: Map<string, CaptionStatus>;
+  trainingStates: Map<string, TrainingState>;
   refresh: () => void;
 
-  // log subscriptions (по ключу)
+  // log subs
   getLog: (key: string) => string;
   subscribeLog: (key: string, cb: (chunk: string) => void) => () => void;
 
-  // активные long-running локальные задачи
+  // local long-running
   isUploading: (pod_id: string, project: string) => boolean;
   isBuilding: (project: string) => boolean;
   isTesting: (pod_id: string, project: string) => boolean;
-  // последний результат теста (для модалки)
   takeTestResult: (
     pod_id: string,
     project: string,
   ) => TestCaptionResult | null;
 
-  // start methods
   startUpload: (args: {
     api_key: string;
     pod_id: string;
@@ -122,6 +228,42 @@ export interface TasksApi {
     audio?: boolean;
     gemini_api_key?: string | null;
   }) => Promise<{ ok: boolean; error?: string }>;
+  startTraining: (args: {
+    api_key: string;
+    pod_id: string;
+    project_name: string;
+    rank: number;
+    mode: string;
+    steps: number;
+    trigger_word?: string | null;
+    validation_prompts?: string[];
+    validation_images?: string[];
+    enable_gradient_checkpointing?: boolean;
+    load_text_encoder_in_8bit?: boolean;
+    expandable_segments?: boolean;
+    audio: boolean;
+    clip_count: number;
+    buckets: Array<[number, number, number]>;
+    raw_config_yaml?: string | null;
+  }) => Promise<{ ok: boolean; error?: string }>;
+  exportTrainingConfig: (args: {
+    api_key: string;
+    pod_id: string;
+    project_name: string;
+    rank: number;
+    mode: string;
+    steps: number;
+    trigger_word?: string | null;
+    validation_prompts?: string[];
+    validation_images?: string[];
+    enable_gradient_checkpointing?: boolean;
+    load_text_encoder_in_8bit?: boolean;
+    expandable_segments?: boolean;
+    audio: boolean;
+    clip_count: number;
+    buckets: Array<[number, number, number]>;
+  }) => Promise<string>;
+  resetTraining: (pod_id: string, project: string) => Promise<void>;
 }
 
 const TasksContext = createContext<TasksApi | null>(null);
@@ -131,10 +273,65 @@ export const useTasks = (): TasksApi => {
   return v;
 };
 
-/**
- * Live-парсинг прогресса из лог-буфера задачи. Возвращает свежий Progress
- * на каждое появление строки в логе (а не раз в 5с с тика).
- */
+// ──────────────────────────────────────────────────────────────────────────
+// Convenience hooks (1-line reads)
+// ──────────────────────────────────────────────────────────────────────────
+
+export function usePod(id: string | null | undefined): Pod | null {
+  const t = useTasks();
+  if (!id) return null;
+  return t.pods.get(id) ?? null;
+}
+
+export function useManagedPod(id: string | null | undefined): ManagedPod | null {
+  const t = useTasks();
+  if (!id) return null;
+  return t.managed.find((m) => m.id === id) ?? null;
+}
+
+export function useSshProbe(id: string | null | undefined): SshProbe | null {
+  const t = useTasks();
+  if (!id) return null;
+  return t.sshProbes.get(id) ?? null;
+}
+
+export function useNvidia(id: string | null | undefined): NvidiaInfo | null {
+  const t = useTasks();
+  if (!id) return null;
+  return t.nvidia.get(id) ?? null;
+}
+
+export function useProject(name: string | null | undefined): Project | null {
+  const t = useTasks();
+  if (!name) return null;
+  return t.projects.get(name) ?? null;
+}
+
+export function useInitState(podId: string | null | undefined): InitState | null {
+  const t = useTasks();
+  if (!podId) return null;
+  return t.initStates.get(podId) ?? null;
+}
+
+export function useCaptionStatus(
+  podId: string | null | undefined,
+  project: string | null | undefined,
+): CaptionStatus | null {
+  const t = useTasks();
+  if (!podId || !project) return null;
+  return t.captionStatuses.get(`${podId}:${project}`) ?? null;
+}
+
+export function useTrainingState(
+  podId: string | null | undefined,
+  project: string | null | undefined,
+): TrainingState | null {
+  const t = useTasks();
+  if (!podId || !project) return null;
+  return t.trainingStates.get(`${podId}:${project}`) ?? null;
+}
+
+/** Live-парсинг прогресса из лог-буфера задачи. */
 export function useLiveProgress(
   log_key: string | undefined,
   kind: ProgressKind | undefined,
@@ -148,8 +345,7 @@ export function useLiveProgress(
       return;
     }
     const recompute = () => {
-      const pp = parseProgress(kind, tasks.getLog(log_key));
-      setP(pp);
+      setP(parseProgress(kind, tasks.getLog(log_key)));
     };
     recompute();
     const unsub = tasks.subscribeLog(log_key, () => recompute());
@@ -159,28 +355,13 @@ export function useLiveProgress(
   return p;
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Constants & key helpers
+// ──────────────────────────────────────────────────────────────────────────
+
 const INIT_STEPS = ["packages", "env", "model", "encoder", "verify"] as const;
 const POLL_INTERVAL_MS = 5_000;
 const LOG_CAP = 200_000;
-
-interface InitState {
-  tmux_available: boolean;
-  steps: Record<
-    string,
-    { state: "pending" | "running" | "done" | "failed"; log_size: number }
-  >;
-}
-interface CaptionState {
-  state: "pending" | "running" | "done" | "failed";
-  log_size: number;
-}
-
-// keys:
-//   build:<project>
-//   upload:<pod_id>:<project>
-//   test_caption:<pod_id>:<project>
-//   init:<pod_id>:<step>
-//   caption:<pod_id>:<project>
 
 export function uploadKey(pod_id: string, project: string) {
   return `upload:${pod_id}:${project}`;
@@ -197,22 +378,199 @@ export function initStepKey(pod_id: string, step: string) {
 export function captionKey(pod_id: string, project: string) {
   return `caption:${pod_id}:${project}`;
 }
+export function trainKey(pod_id: string, project: string) {
+  return `train:${pod_id}:${project}`;
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Provider
+// ──────────────────────────────────────────────────────────────────────────
 
 export function TasksProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
-  const [tasks, setTasks] = useState<PodTask[]>([]);
-  const [byPod, setByPod] = useState<Map<string, PodTask[]>>(new Map());
-  const [sshProbes, setSshProbes] = useState<Map<string, SshProbeCached>>(
-    new Map(),
-  );
-  const sshProbesRef = useRef<Map<string, SshProbeCached>>(new Map());
 
+  // ---- secrets
+  const [apiKey, setApiKey] = useState<string | null>(null);
+  const [hfToken, setHfToken] = useState<string>("");
+  const [geminiKey, setGeminiKey] = useState<string>("");
+  const apiKeyRef = useRef<string | null>(null);
+  const hfTokenRef = useRef<string>("");
+  const geminiKeyRef = useRef<string>("");
+
+  const reloadSecrets = useCallback(async () => {
+    const k = (await store.get<string>("runpod_key")) ?? "";
+    const hf = (await store.get<string>("hf_token")) ?? "";
+    const gk = (await store.get<string>("gemini_key")) ?? "";
+    setApiKey(k || null);
+    setHfToken(hf);
+    setGeminiKey(gk);
+    apiKeyRef.current = k || null;
+    hfTokenRef.current = hf;
+    geminiKeyRef.current = gk;
+  }, []);
+
+  useEffect(() => {
+    reloadSecrets();
+  }, [reloadSecrets]);
+
+  // ---- preferences (notifications)
+  const [notificationsEnabled, setNotificationsEnabledState] = useState(true);
+  const notificationsEnabledRef = useRef(true);
+  useEffect(() => {
+    (async () => {
+      const v = (await store.get<boolean>("notifications_enabled")) ?? true;
+      setNotificationsEnabledState(v);
+      notificationsEnabledRef.current = v;
+    })();
+  }, []);
+  const setNotificationsEnabled = useCallback(async (v: boolean) => {
+    setNotificationsEnabledState(v);
+    notificationsEnabledRef.current = v;
+    await store.set("notifications_enabled", v);
+    await store.save();
+  }, []);
+  const notify = useCallback((title: string, body: string) => {
+    if (!notificationsEnabledRef.current) return;
+    invoke("notify", { title, body }).catch(() => {});
+  }, []);
+
+  // ---- pods (live + managed)
+  const [pods, setPods] = useState<Map<string, Pod>>(new Map());
+  const [managed, setManagedState] = useState<ManagedPod[]>([]);
+  const reloadPods = useCallback(async () => {
+    const list = await loadManaged();
+    setManagedState(list);
+    if (apiKeyRef.current) {
+      try {
+        const live = await invoke<Pod[]>("list_pods", {
+          apiKey: apiKeyRef.current,
+        });
+        const m = new Map<string, Pod>();
+        for (const p of live) m.set(p.id, p);
+        setPods(m);
+      } catch {
+        /* ignore */
+      }
+    }
+  }, []);
+  const setManaged = useCallback(async (next: ManagedPod[]) => {
+    setManagedState(next);
+    await saveManaged(next);
+  }, []);
+
+  useEffect(() => {
+    if (apiKey) reloadPods();
+  }, [apiKey, reloadPods]);
+
+  // ---- ssh probes / nvidia
+  const [sshProbes, setSshProbes] = useState<Map<string, SshProbe>>(new Map());
+  const sshProbesRef = useRef<Map<string, SshProbe>>(new Map());
+  const [nvidia, setNvidia] = useState<Map<string, NvidiaInfo>>(new Map());
+  const nvidiaRef = useRef<Map<string, NvidiaInfo>>(new Map());
+
+  // ---- projects
+  const [projectList, setProjectList] = useState<string[] | null>(null);
+  const [projects, setProjects] = useState<Map<string, Project>>(new Map());
+  const projectsRef = useRef<Map<string, Project>>(new Map());
+
+  const reloadProjectList = useCallback(async () => {
+    try {
+      const list = await listProjects();
+      setProjectList(list);
+    } catch {
+      setProjectList([]);
+    }
+  }, []);
+
+  const loadProjectByName = useCallback(
+    async (name: string): Promise<Project | null> => {
+      try {
+        const p = await loadProject(name);
+        projectsRef.current.set(p.name, p);
+        setProjects(new Map(projectsRef.current));
+        return p;
+      } catch {
+        return null;
+      }
+    },
+    [],
+  );
+
+  const saveProject = useCallback(async (p: Project): Promise<Project> => {
+    const saved = await invokeSaveProject(p);
+    projectsRef.current.set(saved.name, saved);
+    setProjects(new Map(projectsRef.current));
+    return saved;
+  }, []);
+
+  useEffect(() => {
+    reloadProjectList();
+  }, [reloadProjectList]);
+
+  // ---- local tools
+  const [localTools, setLocalTools] = useState<LocalTools | null>(null);
+  const [installing, setInstallingMap] = useState<
+    Record<"ffmpeg" | "runpodctl", InstallState>
+  >({
+    ffmpeg: { running: false, log: null },
+    runpodctl: { running: false, log: null },
+  });
+  const installingRef = useRef(installing);
+  installingRef.current = installing;
+
+  const reloadLocalTools = useCallback(async () => {
+    try {
+      setLocalTools(await checkLocalTools());
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const setInstallState = useCallback(
+    (which: "ffmpeg" | "runpodctl", patch: Partial<InstallState>) => {
+      const next = {
+        ...installingRef.current,
+        [which]: { ...installingRef.current[which], ...patch },
+      };
+      installingRef.current = next;
+      setInstallingMap(next);
+    },
+    [],
+  );
+
+  const installFfmpeg = useCallback(async () => {
+    if (installingRef.current.ffmpeg.running) return;
+    setInstallState("ffmpeg", { running: true, log: null });
+    try {
+      const out = await invokeInstallFfmpeg();
+      setInstallState("ffmpeg", { running: false, log: out });
+      await reloadLocalTools();
+    } catch (e: any) {
+      setInstallState("ffmpeg", { running: false, log: String(e) });
+    }
+  }, [setInstallState, reloadLocalTools]);
+
+  const installRunpodctl = useCallback(async () => {
+    if (installingRef.current.runpodctl.running) return;
+    setInstallState("runpodctl", { running: true, log: null });
+    try {
+      const out = await invokeInstallRunpodctl();
+      setInstallState("runpodctl", { running: false, log: out });
+      await reloadLocalTools();
+    } catch (e: any) {
+      setInstallState("runpodctl", { running: false, log: String(e) });
+    }
+  }, [setInstallState, reloadLocalTools]);
+
+  useEffect(() => {
+    reloadLocalTools();
+  }, [reloadLocalTools]);
+
+  // ---- builds
   const [builds, setBuilds] = useState<Map<string, BuildState>>(new Map());
   const buildsRef = useRef<Map<string, BuildState>>(new Map());
   const updateBuild = useCallback(
     (projectRaw: string | undefined, mut: (b: BuildState) => BuildState) => {
-      // Если бэкенд по какой-то причине не дал project в payload —
-      // прилепляем событие к единственному текущему билду.
       let project = projectRaw;
       if (!project) {
         for (const [name, b] of buildsRef.current) {
@@ -223,42 +581,59 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         }
       }
       if (!project) return;
-      const cur = buildsRef.current.get(project) ?? {
-        project,
-        status: "running" as const,
-        total_clips: 0,
-        done_clips: 0,
-        videos_done: 0,
-        clips_per_video: {},
-        clip_done_per_video: {},
-        parts: [],
-        started_at: Date.now(),
-      };
+      const cur =
+        buildsRef.current.get(project) ??
+        ({
+          project,
+          status: "running" as const,
+          total_clips: 0,
+          done_clips: 0,
+          videos_done: 0,
+          clips_per_video: {},
+          clip_done_per_video: {},
+          parts: [],
+          started_at: Date.now(),
+        } as BuildState);
       const next = mut(cur);
       buildsRef.current.set(project, next);
       setBuilds(new Map(buildsRef.current));
     },
     [],
   );
+
+  // ---- task list
+  const [tasks, setTasks] = useState<PodTask[]>([]);
+  const [byPod, setByPod] = useState<Map<string, PodTask[]>>(new Map());
+  const [initStates, setInitStates] = useState<Map<string, InitState>>(new Map());
+  const initStatesRef = useRef<Map<string, InitState>>(new Map());
+  const [captionStatuses, setCaptionStatuses] = useState<
+    Map<string, CaptionStatus>
+  >(new Map());
+  const captionStatusesRef = useRef<Map<string, CaptionStatus>>(new Map());
+  const [trainingStates, setTrainingStates] = useState<
+    Map<string, TrainingState>
+  >(new Map());
+  const trainingStatesRef = useRef<Map<string, TrainingState>>(new Map());
+  // Чтобы не дублировать уведомления о завершении валидации, помним какие
+  // checkpoint-step'ы уже «прозвенели».
+  const validationsNotifiedRef = useRef<Map<string, Set<number>>>(new Map());
+
   const prevKeysRef = useRef<Map<string, PodTask>>(new Map());
   const ticking = useRef(false);
 
-  // log buffers and subscribers, hold in refs so they survive re-renders
+  // log buffers + subscribers
   const logsRef = useRef<Map<string, string>>(new Map());
   const subsRef = useRef<Map<string, Set<(s: string) => void>>>(new Map());
 
-  // local long-running task tracking (uploads/builds/tests)
+  // local long-running tracking
   const uploadingRef = useRef<Set<string>>(new Set());
   const buildingRef = useRef<Set<string>>(new Set());
   const testingRef = useRef<Set<string>>(new Set());
-  // Авто-продвижение init: запоминаем уже инициированные шаги, чтобы не звать
-  // start_init_step повторно пока бэкенд не успел вернуть running.
   const advancedInitRef = useRef<Set<string>>(new Set());
   const testResultsRef = useRef<Map<string, TestCaptionResult>>(new Map());
   const [, forceRender] = useState(0);
   const bump = useCallback(() => forceRender((x) => x + 1), []);
 
-  // init step tail positions (per pod+step)
   const tailPosRef = useRef<Map<string, number>>(new Map());
 
   function appendLog(key: string, chunk: string) {
@@ -290,34 +665,25 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   function clearLog(key: string) {
     logsRef.current.delete(key);
     const subs = subsRef.current.get(key);
-    // notify subscribers with empty marker — they should re-read
     if (subs) for (const fn of subs) fn("\x1b[2J\x1b[H");
   }
 
-  // Один раз — слушаем все события Tauri.
-  // StrictMode в dev двойно вызывает useEffect: cleanup может сработать
-  // ДО того как `await listen(...)` зарезолвится → unlisten никогда не
-  // вызывается → каждое событие ловится дважды и счётчики/прогресс пляшут.
-  // Защищаемся флагом alive: если cleanup уже прошёл к моменту резолва,
-  // сразу же отписываемся.
+  // ---- Tauri event listeners (build/upload/caption_test logs)
   useEffect(() => {
     let alive = true;
     const cleanups: Array<() => void> = [];
     const track = (u: () => void) => {
-      if (!alive) {
-        u();
-      } else {
-        cleanups.push(u);
-      }
+      if (!alive) u();
+      else cleanups.push(u);
     };
 
     (async () => {
-      // BUILD: rich-state listeners
+      // BUILD
       track(
         await listen<{ project: string; videos: number }>(
           "ds_build:start",
           (e) => {
-            updateBuild(e.payload.project, (_) => ({
+            updateBuild(e.payload.project, () => ({
               project: e.payload.project,
               status: "running",
               total_clips: 0,
@@ -419,6 +785,22 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         }),
       );
       track(
+        await listen<{
+          project: string;
+          name: string;
+          reason: string;
+        }>("ds_build:skip", (e) => {
+          const why =
+            e.payload.reason === "no_audio"
+              ? "no audio track (project has audio=on)"
+              : e.payload.reason;
+          appendLog(
+            buildKey(e.payload.project),
+            `[${e.payload.name}] SKIPPED: ${why}\r\n`,
+          );
+        }),
+      );
+      track(
         await listen<{ project: string }>("ds_build:zipping", (e) => {
           updateBuild(e.payload.project, (b) => ({ ...b, status: "zipping" }));
           appendLog(buildKey(e.payload.project), `\r\n[zipping...]\r\n`);
@@ -437,7 +819,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         ),
       );
 
-      // UPLOAD logs
+      // UPLOAD
       track(
         await listen<{
           pod_id: string;
@@ -478,7 +860,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         ),
       );
 
-      // TEST CAPTION logs
+      // TEST CAPTION
       track(
         await listen<{ pod_id: string; project: string; line: string }>(
           "ds_caption_test:log",
@@ -498,37 +880,54 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Tick: poll init/caption state, accumulate tail logs
+  // ---- main tick: live pods, ssh probes, nvidia, init/caption state, log tails
   const tick = useCallback(async () => {
     if (ticking.current) return;
     ticking.current = true;
     try {
-      const apiKey = (await store.get<string>("runpod_key")) ?? "";
-      const hfToken = (await store.get<string>("hf_token")) ?? "";
-      if (!apiKey) {
+      const ak = apiKeyRef.current ?? "";
+      const hf = hfTokenRef.current;
+      if (!ak) {
         prevKeysRef.current = new Map();
         setTasks([]);
         setByPod(new Map());
         return;
       }
-      const managed: ManagedPod[] = await loadManaged();
+
+      // live pods
+      try {
+        const live = await invoke<Pod[]>("list_pods", { apiKey: ak });
+        const m = new Map<string, Pod>();
+        for (const p of live) m.set(p.id, p);
+        setPods(m);
+      } catch {
+        /* ignore */
+      }
+
+      const managedList: ManagedPod[] = await loadManaged();
+      setManagedState(managedList);
+
       const projectNames = await listProjects().catch(() => []);
       const projectObjs: Project[] = [];
       for (const n of projectNames) {
         try {
-          projectObjs.push(await loadProject(n));
+          const p = await loadProject(n);
+          projectObjs.push(p);
+          projectsRef.current.set(p.name, p);
         } catch {
           /* skip */
         }
       }
+      setProjects(new Map(projectsRef.current));
+      setProjectList(projectNames);
 
       const next: PodTask[] = [];
 
-      // SSH probes (параллельно с остальным)
-      const probesPending = managed.map(async (pod) => {
+      // SSH probes (parallel)
+      const probesPending = managedList.map(async (pod) => {
         try {
-          const r = await invoke<SshProbeCached>("pod_ssh_probe", {
-            apiKey,
+          const r = await invoke<SshProbe>("pod_ssh_probe", {
+            apiKey: ak,
             podId: pod.id,
           });
           sshProbesRef.current.set(pod.id, r);
@@ -546,12 +945,14 @@ export function TasksProvider({ children }: { children: ReactNode }) {
 
       // INIT
       await Promise.all(
-        managed.map(async (pod) => {
+        managedList.map(async (pod) => {
           try {
             const init = await invoke<InitState>("check_init_state", {
-              apiKey,
+              apiKey: ak,
               podId: pod.id,
             });
+            initStatesRef.current.set(pod.id, init);
+
             const states = INIT_STEPS.map(
               (s) => init.steps[s]?.state ?? "pending",
             );
@@ -559,8 +960,6 @@ export function TasksProvider({ children }: { children: ReactNode }) {
             const failedIdx = states.indexOf("failed");
             const lastDoneIdx = states.lastIndexOf("done");
 
-            // Авто-продвижение: если предыдущий шаг done и следующий pending —
-            // стартуем его сами.
             if (
               runningIdx === -1 &&
               failedIdx === -1 &&
@@ -573,18 +972,16 @@ export function TasksProvider({ children }: { children: ReactNode }) {
                 advancedInitRef.current.add(startKey);
                 invoke("start_init_step", {
                   args: {
-                    api_key: apiKey,
+                    api_key: ak,
                     pod_id: pod.id,
                     step: nextStep,
-                    hf_token: hfToken,
+                    hf_token: hf,
                   },
                 })
                   .catch(() => {
                     advancedInitRef.current.delete(startKey);
                   })
                   .finally(() => {
-                    // через 30с разрешаем повторно стартовать (на случай если
-                    // прошлый старт молча провалился)
                     setTimeout(
                       () => advancedInitRef.current.delete(startKey),
                       30_000,
@@ -592,7 +989,6 @@ export function TasksProvider({ children }: { children: ReactNode }) {
                   });
               }
             }
-            // Очищаем флаг автостарта когда шаг подхватился (стал running/done/failed)
             if (runningIdx >= 0) {
               const stepName = INIT_STEPS[runningIdx];
               advancedInitRef.current.delete(`${pod.id}:${stepName}`);
@@ -605,14 +1001,15 @@ export function TasksProvider({ children }: { children: ReactNode }) {
               try {
                 const r = await invoke<{ total: number; content: string }>(
                   "tail_init_log",
-                  { apiKey, podId: pod.id, step: stepName, since },
+                  { apiKey: ak, podId: pod.id, step: stepName, since },
                 );
                 if (r.content) appendLog(k, r.content);
                 tailPosRef.current.set(k, r.total);
               } catch {
                 /* ignore */
               }
-              const progKind: ProgressKind = `init_${stepName}` as ProgressKind;
+              const progKind: ProgressKind =
+                `init_${stepName}` as ProgressKind;
               const p = parseProgress(progKind, getLog(k));
               next.push({
                 kind: "init",
@@ -630,13 +1027,12 @@ export function TasksProvider({ children }: { children: ReactNode }) {
               });
             } else if (failedIdx >= 0) {
               const stepName = INIT_STEPS[failedIdx];
-              // дотянуть хвост — там сообщение об ошибке
               const k = initStepKey(pod.id, stepName);
               const since = tailPosRef.current.get(k) ?? 0;
               try {
                 const r = await invoke<{ total: number; content: string }>(
                   "tail_init_log",
-                  { apiKey, podId: pod.id, step: stepName, since },
+                  { apiKey: ak, podId: pod.id, step: stepName, since },
                 );
                 if (r.content) appendLog(k, r.content);
                 tailPosRef.current.set(k, r.total);
@@ -659,22 +1055,24 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           }
         }),
       );
+      setInitStates(new Map(initStatesRef.current));
 
       // CAPTION (per uploaded project)
       await Promise.all(
-        managed.flatMap((pod) =>
+        managedList.flatMap((pod) =>
           projectObjs
             .filter((p) => !!p.last_uploads?.[pod.id])
             .map(async (proj) => {
               try {
-                const cap = await invoke<CaptionState>(
+                const cap = await invoke<CaptionStatus>(
                   "check_caption_state",
                   {
-                    apiKey,
+                    apiKey: ak,
                     podId: pod.id,
                     projectName: proj.name,
                   },
                 );
+                captionStatusesRef.current.set(`${pod.id}:${proj.name}`, cap);
                 if (cap.state === "running") {
                   const k = captionKey(pod.id, proj.name);
                   const since = tailPosRef.current.get(k) ?? 0;
@@ -682,7 +1080,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
                     const r = await invoke<{ total: number; content: string }>(
                       "tail_caption_log",
                       {
-                        apiKey,
+                        apiKey: ak,
                         podId: pod.id,
                         projectName: proj.name,
                         since,
@@ -712,7 +1110,12 @@ export function TasksProvider({ children }: { children: ReactNode }) {
                   try {
                     const r = await invoke<{ total: number; content: string }>(
                       "tail_caption_log",
-                      { apiKey, podId: pod.id, projectName: proj.name, since },
+                      {
+                        apiKey: ak,
+                        podId: pod.id,
+                        projectName: proj.name,
+                        since,
+                      },
                     );
                     if (r.content) appendLog(k, r.content);
                     tailPosRef.current.set(k, r.total);
@@ -734,12 +1137,112 @@ export function TasksProvider({ children }: { children: ReactNode }) {
             }),
         ),
       );
+      setCaptionStatuses(new Map(captionStatusesRef.current));
 
-      // include local tasks (upload/build/test) into pills
+      // TRAINING (per uploaded project)
+      await Promise.all(
+        managedList.flatMap((pod) =>
+          projectObjs
+            .filter((p) => !!p.last_uploads?.[pod.id])
+            .map(async (proj) => {
+              try {
+                const tr = await invoke<TrainingState>(
+                  "check_training_state",
+                  {
+                    apiKey: ak,
+                    podId: pod.id,
+                    projectName: proj.name,
+                  },
+                );
+                const key = `${pod.id}:${proj.name}`;
+                // diff validations_done → уведомления на каждом новом checkpoint
+                const prev = trainingStatesRef.current.get(key);
+                const prevDone = new Set(prev?.validations_done ?? []);
+                const seenSet =
+                  validationsNotifiedRef.current.get(key) ?? new Set<number>();
+                for (const s of tr.validations_done) {
+                  if (!prevDone.has(s) && !seenSet.has(s)) {
+                    seenSet.add(s);
+                    notify(
+                      t("notify.validation_done"),
+                      `${proj.name} · step ${s}`,
+                    );
+                  }
+                }
+                validationsNotifiedRef.current.set(key, seenSet);
+                trainingStatesRef.current.set(key, tr);
+                if (tr.state === "running") {
+                  const k = trainKey(pod.id, proj.name);
+                  const since = tailPosRef.current.get(k) ?? 0;
+                  try {
+                    const r = await invoke<{ total: number; content: string }>(
+                      "tail_training_log",
+                      {
+                        apiKey: ak,
+                        podId: pod.id,
+                        projectName: proj.name,
+                        since,
+                      },
+                    );
+                    if (r.content) appendLog(k, r.content);
+                    tailPosRef.current.set(k, r.total);
+                  } catch {
+                    /* ignore */
+                  }
+                  // Прогресс badge'а зависит от текущей фазы:
+                  // train  → step / total_steps
+                  // preprocess → preprocess_progress.done / total
+                  // иначе   → undefined (просто spinner)
+                  let pct: number | undefined;
+                  let pl = tr.phase ?? "";
+                  if (tr.phase === "train" && (tr.total_steps ?? 0) > 0) {
+                    pct = ((tr.step ?? 0) / (tr.total_steps as number)) * 100;
+                    pl = `${tr.step ?? 0}/${tr.total_steps}`;
+                  } else if (
+                    tr.phase === "preprocess" &&
+                    tr.preprocess_progress &&
+                    tr.preprocess_progress.total > 0
+                  ) {
+                    pct =
+                      (tr.preprocess_progress.done /
+                        tr.preprocess_progress.total) *
+                      100;
+                    pl = `${tr.preprocess_progress.kind} ${tr.preprocess_progress.done}/${tr.preprocess_progress.total}`;
+                  }
+                  next.push({
+                    kind: "train",
+                    pod_id: pod.id,
+                    pod_name: pod.name || pod.id,
+                    project_name: proj.name,
+                    state: "running",
+                    label: `train · ${proj.name}`,
+                    progress: pct,
+                    progress_label: pl,
+                    log_key: k,
+                  });
+                } else if (tr.state === "failed") {
+                  next.push({
+                    kind: "train",
+                    pod_id: pod.id,
+                    pod_name: pod.name || pod.id,
+                    project_name: proj.name,
+                    state: "failed",
+                    label: `train · ${proj.name}`,
+                  });
+                }
+              } catch {
+                /* ignore */
+              }
+            }),
+        ),
+      );
+      setTrainingStates(new Map(trainingStatesRef.current));
+
+      // local tasks
       for (const k of uploadingRef.current) {
         const [, pod_id, ...rest] = k.split(":");
         const project = rest.join(":");
-        const pod = managed.find((m) => m.id === pod_id);
+        const pod = managedList.find((m) => m.id === pod_id);
         const p = parseProgress("upload", getLog(k));
         next.push({
           kind: "upload",
@@ -766,7 +1269,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       for (const k of testingRef.current) {
         const [, pod_id, ...rest] = k.split(":");
         const project = rest.join(":");
-        const pod = managed.find((m) => m.id === pod_id);
+        const pod = managedList.find((m) => m.id === pod_id);
         next.push({
           kind: "test_caption",
           pod_id,
@@ -777,14 +1280,12 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         });
       }
 
-      // detect transitions
+      // detect transitions for OS notifications (init/caption only — local
+      // задачи notify-ят сами в start*-методах)
       const keyed = new Map<string, PodTask>();
       for (const t of next) keyed.set(taskKey(t), t);
-
       for (const [key, prev] of prevKeysRef.current) {
         if (prev.state !== "running") continue;
-        // Локальные задачи (upload/build/test_caption) сами шлют notify
-        // в start*-методах — здесь дублировать не нужно.
         if (
           prev.kind === "upload" ||
           prev.kind === "build" ||
@@ -793,13 +1294,14 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           continue;
         const cur = keyed.get(key);
         if (!cur) {
-          fireDoneNotification(prev, t);
+          fireNotify(prev, t, "done", notify);
         } else if (cur.state === "failed") {
-          fireFailedNotification(prev, t);
+          fireNotify(prev, t, "failed", notify);
         }
       }
       prevKeysRef.current = keyed;
       setTasks(next);
+
       const bucket = new Map<string, PodTask[]>();
       for (const t of next) {
         const id = t.pod_id ?? "_";
@@ -811,6 +1313,24 @@ export function TasksProvider({ children }: { children: ReactNode }) {
 
       await Promise.all(probesPending);
       setSshProbes(new Map(sshProbesRef.current));
+
+      // nvidia for pods with healthy SSH
+      await Promise.all(
+        managedList.map(async (pod) => {
+          const probe = sshProbesRef.current.get(pod.id);
+          if (!probe?.ok) return;
+          try {
+            const n = await invoke<NvidiaInfo>("pod_nvidia_smi", {
+              apiKey: ak,
+              podId: pod.id,
+            });
+            nvidiaRef.current.set(pod.id, n);
+          } catch {
+            /* ignore */
+          }
+        }),
+      );
+      setNvidia(new Map(nvidiaRef.current));
     } finally {
       ticking.current = false;
     }
@@ -822,7 +1342,9 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     return () => window.clearInterval(id);
   }, [tick]);
 
-  // ─── start methods ────────────────────────────────────────────────────────
+  // ──────────────────────────────────────────────────────────────────────
+  // Start methods
+  // ──────────────────────────────────────────────────────────────────────
 
   const startUpload = useCallback(
     async (args: {
@@ -844,18 +1366,12 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           projectName: args.project_name,
         });
         appendLog(k, `\r\n# upload finished\r\n`);
-        invoke("notify", {
-          title: t("notify.upload_done"),
-          body: `${args.project_name}`,
-        }).catch(() => {});
+        notify(t("notify.upload_done"), args.project_name);
         return { ok: true };
       } catch (e: any) {
         const err = String(e);
         appendLog(k, `\r\n# upload failed: ${err}\r\n`);
-        invoke("notify", {
-          title: t("notify.upload_failed"),
-          body: `${args.project_name}: ${err}`,
-        }).catch(() => {});
+        notify(t("notify.upload_failed"), `${args.project_name}: ${err}`);
         return { ok: false, error: err };
       } finally {
         uploadingRef.current.delete(k);
@@ -863,7 +1379,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         tick();
       }
     },
-    [tick, bump],
+    [tick, bump, t],
   );
 
   const startBuild = useCallback(
@@ -881,15 +1397,11 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           hash: args.hash,
         });
         appendLog(k, `\r\n# build finished\r\n`);
-        invoke("notify", {
-          title: t("notify.build_done"),
-          body: args.project_name,
-        }).catch(() => {});
+        notify(t("notify.build_done"), args.project_name);
         return { ok: true };
       } catch (e: any) {
         const err = String(e);
         appendLog(k, `\r\n# build failed: ${err}\r\n`);
-        // помечаем последний running part как failed и общий статус
         updateBuild(args.project_name, (b) => {
           const parts = [...b.parts];
           for (let i = parts.length - 1; i >= 0; i--) {
@@ -900,10 +1412,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
           }
           return { ...b, parts, status: "failed", error: err };
         });
-        invoke("notify", {
-          title: t("notify.build_failed"),
-          body: `${args.project_name}: ${err}`,
-        }).catch(() => {});
+        notify(t("notify.build_failed"), `${args.project_name}: ${err}`);
         return { ok: false, error: err };
       } finally {
         buildingRef.current.delete(args.project_name);
@@ -911,7 +1420,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         tick();
       }
     },
-    [tick, bump, updateBuild],
+    [tick, bump, t, updateBuild],
   );
 
   const startTestCaption = useCallback(
@@ -947,7 +1456,6 @@ export function TasksProvider({ children }: { children: ReactNode }) {
             gemini_api_key: args.gemini_api_key,
           },
         });
-        // download clip
         let video_b64: string | undefined;
         let video_mime: string | undefined;
         try {
@@ -968,10 +1476,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         }
         testResultsRef.current.set(k, { ...res, video_b64, video_mime });
         appendLog(k, `\r\n# test finished\r\n`);
-        invoke("notify", {
-          title: t("notify.test_done"),
-          body: `${args.project_name}`,
-        }).catch(() => {});
+        notify(t("notify.test_done"), args.project_name);
         return { ok: true };
       } catch (e: any) {
         const err = String(e);
@@ -983,7 +1488,140 @@ export function TasksProvider({ children }: { children: ReactNode }) {
         tick();
       }
     },
-    [tick, bump],
+    [tick, bump, t],
+  );
+
+  const startTraining = useCallback(
+    async (args: {
+      api_key: string;
+      pod_id: string;
+      project_name: string;
+      rank: number;
+      mode: string;
+      steps: number;
+      trigger_word?: string | null;
+      validation_prompts?: string[];
+      validation_images?: string[];
+      enable_gradient_checkpointing?: boolean;
+      load_text_encoder_in_8bit?: boolean;
+      expandable_segments?: boolean;
+      audio: boolean;
+      clip_count: number;
+      buckets: Array<[number, number, number]>;
+      raw_config_yaml?: string | null;
+    }) => {
+      const k = trainKey(args.pod_id, args.project_name);
+      const stateKey = `${args.pod_id}:${args.project_name}`;
+      clearLog(k);
+      validationsNotifiedRef.current.delete(stateKey);
+      // Сразу очищаем старое состояние (если был failed/done от прошлого
+      // прогона), чтобы вью не показывала ошибку поверх нового запуска.
+      trainingStatesRef.current.delete(stateKey);
+      setTrainingStates(new Map(trainingStatesRef.current));
+      try {
+        await invoke("start_training", {
+          args: {
+            api_key: args.api_key,
+            pod_id: args.pod_id,
+            project_name: args.project_name,
+            rank: args.rank,
+            mode: args.mode,
+            steps: args.steps,
+            trigger_word: args.trigger_word ?? null,
+            validation_prompts: args.validation_prompts ?? [],
+            validation_images: args.validation_images ?? [],
+            enable_gradient_checkpointing:
+              !!args.enable_gradient_checkpointing,
+            load_text_encoder_in_8bit: !!args.load_text_encoder_in_8bit,
+            expandable_segments: !!args.expandable_segments,
+            audio: args.audio,
+            clip_count: args.clip_count,
+            buckets: args.buckets,
+            raw_config_yaml: args.raw_config_yaml ?? null,
+          },
+        });
+        // Optimistic update: tmux уже стартовал, но настоящий poll прилетит
+        // только в следующий tick. Отмечаем состояние как running сразу,
+        // чтобы settings-вью моментально схлопнулась в TrainingActive.
+        trainingStatesRef.current.set(stateKey, {
+          state: "running",
+          log_size: 0,
+          phase: "prep",
+          validations_done: [],
+        });
+        setTrainingStates(new Map(trainingStatesRef.current));
+        tick();
+        return { ok: true };
+      } catch (e: any) {
+        return { ok: false, error: String(e) };
+      }
+    },
+    [tick],
+  );
+
+  const exportTrainingConfig = useCallback(
+    async (args: {
+      api_key: string;
+      pod_id: string;
+      project_name: string;
+      rank: number;
+      mode: string;
+      steps: number;
+      trigger_word?: string | null;
+      validation_prompts?: string[];
+      validation_images?: string[];
+      enable_gradient_checkpointing?: boolean;
+      load_text_encoder_in_8bit?: boolean;
+      expandable_segments?: boolean;
+      audio: boolean;
+      clip_count: number;
+      buckets: Array<[number, number, number]>;
+    }) => {
+      return await invoke<string>("export_training_config", {
+        args: {
+          api_key: args.api_key,
+          pod_id: args.pod_id,
+          project_name: args.project_name,
+          rank: args.rank,
+          mode: args.mode,
+          steps: args.steps,
+          trigger_word: args.trigger_word ?? null,
+          validation_prompts: args.validation_prompts ?? [],
+          validation_images: args.validation_images ?? [],
+          enable_gradient_checkpointing: !!args.enable_gradient_checkpointing,
+          load_text_encoder_in_8bit: !!args.load_text_encoder_in_8bit,
+          expandable_segments: !!args.expandable_segments,
+          audio: args.audio,
+          clip_count: args.clip_count,
+          buckets: args.buckets,
+          raw_config_yaml: null,
+        },
+      });
+    },
+    [],
+  );
+
+  const resetTraining = useCallback(
+    async (pod_id: string, project: string) => {
+      const ak = apiKeyRef.current;
+      if (!ak) return;
+      try {
+        await invoke("reset_training", {
+          apiKey: ak,
+          podId: pod_id,
+          projectName: project,
+        });
+      } catch {
+        /* ignore */
+      }
+      const key = `${pod_id}:${project}`;
+      trainingStatesRef.current.delete(key);
+      validationsNotifiedRef.current.delete(key);
+      setTrainingStates(new Map(trainingStatesRef.current));
+      clearLog(trainKey(pod_id, project));
+      tick();
+    },
+    [tick],
   );
 
   const isUploading = useCallback(
@@ -1000,22 +1638,42 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       testingRef.current.has(testCaptionKey(pod_id, project)),
     [],
   );
-  const takeTestResult = useCallback(
-    (pod_id: string, project: string) => {
-      const k = testCaptionKey(pod_id, project);
-      const r = testResultsRef.current.get(k) ?? null;
-      if (r) testResultsRef.current.delete(k);
-      return r;
-    },
-    [],
-  );
+  const takeTestResult = useCallback((pod_id: string, project: string) => {
+    const k = testCaptionKey(pod_id, project);
+    const r = testResultsRef.current.get(k) ?? null;
+    if (r) testResultsRef.current.delete(k);
+    return r;
+  }, []);
 
   const api: TasksApi = {
+    apiKey,
+    hfToken,
+    geminiKey,
+    reloadSecrets,
+    notificationsEnabled,
+    setNotificationsEnabled,
+    pods,
+    managed,
+    reloadPods,
+    setManaged,
+    sshProbes,
+    nvidia,
+    projectList,
+    projects,
+    reloadProjectList,
+    loadProjectByName,
+    saveProject,
+    localTools,
+    installing,
+    reloadLocalTools,
+    installFfmpeg,
+    installRunpodctl,
     tasks,
     byPod,
-    sshProbes,
-    getSshProbe: (pod_id: string) => sshProbesRef.current.get(pod_id) ?? null,
     builds,
+    initStates,
+    captionStatuses,
+    trainingStates,
     refresh: tick,
     getLog,
     subscribeLog,
@@ -1026,6 +1684,9 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     startUpload,
     startBuild,
     startTestCaption,
+    startTraining,
+    exportTrainingConfig,
+    resetTraining,
   };
 
   return <TasksContext.Provider value={api}>{children}</TasksContext.Provider>;
@@ -1035,46 +1696,26 @@ function taskKey(t: PodTask): string {
   return `${t.kind}:${t.pod_id ?? ""}:${t.project_name ?? ""}`;
 }
 
-function fireDoneNotification(
+function fireNotify(
   task: PodTask,
   t: (k: string) => string,
+  outcome: "done" | "failed",
+  notify: (title: string, body: string) => void,
 ) {
-  const titles: Record<TaskKind, string> = {
-    init: t("notify.init_done"),
-    caption: t("notify.caption_done"),
-    upload: t("notify.upload_done"),
-    build: t("notify.build_done"),
-    test_caption: t("notify.test_done"),
+  const titles: Record<TaskKind, [string, string]> = {
+    init: [t("notify.init_done"), t("notify.init_failed")],
+    caption: [t("notify.caption_done"), t("notify.caption_failed")],
+    upload: [t("notify.upload_done"), t("notify.upload_failed")],
+    build: [t("notify.build_done"), t("notify.build_failed")],
+    test_caption: [t("notify.test_done"), t("notify.test_failed")],
+    train: [t("notify.train_done"), t("notify.train_failed")],
   };
+  const [okT, errT] = titles[task.kind];
   const body = [
     task.project_name ?? "",
-    task.pod_name && task.pod_name !== task.pod_id
-      ? task.pod_name
-      : task.pod_id ?? "",
+    task.pod_name && task.pod_name !== task.pod_id ? task.pod_name : task.pod_id ?? "",
   ]
     .filter(Boolean)
     .join(" · ");
-  invoke("notify", { title: titles[task.kind], body }).catch(() => {});
-}
-
-function fireFailedNotification(
-  task: PodTask,
-  t: (k: string) => string,
-) {
-  const titles: Record<TaskKind, string> = {
-    init: t("notify.init_failed"),
-    caption: t("notify.caption_failed"),
-    upload: t("notify.upload_failed"),
-    build: t("notify.build_failed"),
-    test_caption: t("notify.test_failed"),
-  };
-  const body = [
-    task.project_name ?? "",
-    task.pod_name && task.pod_name !== task.pod_id
-      ? task.pod_name
-      : task.pod_id ?? "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  invoke("notify", { title: titles[task.kind], body }).catch(() => {});
+  notify(outcome === "done" ? okT : errT, body);
 }

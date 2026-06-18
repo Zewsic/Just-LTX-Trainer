@@ -1,34 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { invoke } from "@tauri-apps/api/core";
-import { Button, Card, Mono, Pill, Select, Spinner } from "../../components/ui";
+import {
+  Button,
+  Card,
+  Mono,
+  Pill,
+  ProgressBar,
+  Select,
+  Spinner,
+} from "../../components/ui";
 import XTermPanel, { XTermHandle } from "../../components/XTerm";
 import AutoCaptionBlock from "../../components/AutoCaptionBlock";
 import VideoPromptList from "../../components/VideoPromptList";
+import { Project } from "../../lib/projects";
 import {
-  checkLocalTools,
-  installRunpodctl,
-  LocalTools,
-  Project,
-} from "../../lib/projects";
-import {
-  loadManaged,
-  ManagedPod,
-  Pod,
-  store,
-} from "../../lib/pods";
-import { uploadKey, useTasks } from "../../lib/tasks";
-import { parseProgress, Progress } from "../../lib/progress";
-
-interface SshProbe {
-  ok: boolean;
-  host: string;
-  port: number;
-  user: string;
-  key_used: string | null;
-  error: string | null;
-}
-
+  uploadKey,
+  useLiveProgress,
+  useSshProbe,
+  useTasks,
+} from "../../lib/tasks";
 
 export default function UploadTab({
   project,
@@ -40,121 +30,32 @@ export default function UploadTab({
   onGoTraining: () => void;
 }) {
   const { t } = useTranslation();
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  const [managed, setManaged] = useState<ManagedPod[]>([]);
-  const [livePods, setLivePods] = useState<Record<string, Pod>>({});
+  const tasks = useTasks();
+  const apiKey = tasks.apiKey;
+  const managed = tasks.managed;
+  const livePods = tasks.pods;
+  const tools = tasks.localTools;
+  const installLog = tasks.installing.runpodctl.log;
+  const installing = tasks.installing.runpodctl.running;
+
+  // выбор пода — единственный локально-визуальный state
   const [selectedId, setSelectedId] = useState<string>("");
-  const [probe, setProbe] = useState<SshProbe | null>(null);
-  const [probing, setProbing] = useState(false);
-  const [tools, setTools] = useState<LocalTools | null>(null);
-  const [installing, setInstalling] = useState(false);
-  const [installLog, setInstallLog] = useState<string | null>(null);
+  useEffect(() => {
+    if (selectedId) return;
+    const preferred =
+      managed.find((m) => m.ltx_state !== "init")?.id ?? managed[0]?.id ?? "";
+    if (preferred) setSelectedId(preferred);
+  }, [managed, selectedId]);
 
   const [error, setError] = useState<string | null>(null);
   const [captionsRefresh, setCaptionsRefresh] = useState(0);
-  const [progress, setProgress] = useState<Progress | null>(null);
-  const [phase, setPhase] = useState<string | null>(null);
 
-  const tasks = useTasks();
-
-  const termRef = useRef<XTermHandle>(null);
-  const apiKeyRef = useRef<string | null>(null);
-
-  // Load on mount
-  useEffect(() => {
-    (async () => {
-      const k = (await store.get<string>("runpod_key")) ?? "";
-      setApiKey(k || null);
-      apiKeyRef.current = k || null;
-      const all = await loadManaged();
-      setManaged(all);
-      // подгружаем актуальные данные о подах
-      if (k) {
-        try {
-          const pods = await invoke<Pod[]>("list_pods", { apiKey: k });
-          const map: Record<string, Pod> = {};
-          for (const p of pods) map[p.id] = p;
-          setLivePods(map);
-        } catch {
-          /* noop */
-        }
-      }
-      // выбираем по умолчанию: первый ready, иначе первый из всех
-      const preferred =
-        all.find((m) => m.ltx_state !== "init")?.id ?? all[0]?.id ?? "";
-      setSelectedId(preferred);
-      // tools
-      try {
-        setTools(await checkLocalTools());
-      } catch {
-        /* noop */
-      }
-    })();
-  }, []);
-
+  const probe = useSshProbe(selectedId);
   const selectedManaged = useMemo(
     () => managed.find((m) => m.id === selectedId) ?? null,
     [managed, selectedId],
   );
-  const selectedLive = useMemo(
-    () => livePods[selectedId] ?? null,
-    [livePods, selectedId],
-  );
-
-  // SSH probe для выбранного пода
-  useEffect(() => {
-    if (!apiKey || !selectedId) {
-      setProbe(null);
-      return;
-    }
-    runProbe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [apiKey, selectedId]);
-
-  async function runProbe() {
-    if (!apiKeyRef.current || !selectedId || probing) return;
-    setProbing(true);
-    try {
-      const r = await invoke<SshProbe>("pod_ssh_probe", {
-        apiKey: apiKeyRef.current,
-        podId: selectedId,
-      });
-      setProbe(r);
-    } catch (e: any) {
-      setProbe({
-        ok: false,
-        host: "",
-        port: 0,
-        user: selectedId,
-        key_used: null,
-        error: String(e),
-      });
-    } finally {
-      setProbing(false);
-    }
-  }
-
-  async function refreshTools() {
-    try {
-      setTools(await checkLocalTools());
-    } catch {
-      /* noop */
-    }
-  }
-
-  async function doInstallRunpodctl() {
-    setInstalling(true);
-    setInstallLog(null);
-    try {
-      const out = await installRunpodctl();
-      setInstallLog(out);
-      await refreshTools();
-    } catch (e: any) {
-      setInstallLog(String(e));
-    } finally {
-      setInstalling(false);
-    }
-  }
+  const selectedLive = livePods.get(selectedId) ?? null;
 
   async function doUpload() {
     if (!apiKey || !selectedId) return;
@@ -168,55 +69,39 @@ export default function UploadTab({
     await onProjectReload();
   }
 
-  // Подписка терминала на буфер задачи (выживает переключение вкладок).
-  // Важно: панель XTerm условно-рендерится (см. ниже), поэтому подписку
-  // нужно (пере)ставить когда панель реально появилась — гейтим эффект
-  // по тем же условиям, что и рендер панели.
+  // Терминал: подписка на буфер задачи
+  const termRef = useRef<XTermHandle>(null);
   const uploadLogKey = selectedId ? uploadKey(selectedId, project.name) : null;
-  const isUploadingNow =
+  const isUploading =
     !!selectedId && tasks.isUploading(selectedId, project.name);
   const hasUploadLog =
     !!uploadLogKey && tasks.getLog(uploadLogKey).length > 0;
-  const termVisible = isUploadingNow || hasUploadLog;
+  const termVisible = isUploading || hasUploadLog;
+
   useEffect(() => {
     if (!uploadLogKey || !termVisible) return;
-    const t = termRef.current;
-    if (!t) return;
-    t.reset();
+    const term = termRef.current;
+    if (!term) return;
+    term.reset();
     const initial = tasks.getLog(uploadLogKey);
-    if (initial) t.write(initial);
+    if (initial) term.write(initial);
     const unsub = tasks.subscribeLog(uploadLogKey, (chunk) => {
-      if (chunk === "\x1b[2J\x1b[H") {
-        t.reset();
-      } else {
-        t.write(chunk);
-      }
+      if (chunk === "\x1b[2J\x1b[H") term.reset();
+      else term.write(chunk);
     });
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [uploadLogKey, termVisible]);
 
-  // Парс прогресса/фазы из лог-буфера на каждый chunk.
-  useEffect(() => {
-    if (!uploadLogKey) {
-      setProgress(null);
-      setPhase(null);
-      return;
-    }
-    const recompute = () => {
-      const log = tasks.getLog(uploadLogKey);
-      setProgress(parseProgress("upload", log));
-      const phaseMatches = [...log.matchAll(/# phase: (\w+)/g)];
-      const last = phaseMatches[phaseMatches.length - 1];
-      setPhase(last ? last[1] : null);
-    };
-    recompute();
-    const unsub = tasks.subscribeLog(uploadLogKey, () => recompute());
-    return unsub;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [uploadLogKey]);
+  // фаза + прогресс — для лейбла на кнопке-прогрессе
+  const progress = useLiveProgress(uploadLogKey ?? undefined, "upload");
+  const phase = useMemo(() => {
+    if (!uploadLogKey) return null;
+    const log = tasks.getLog(uploadLogKey);
+    const matches = [...log.matchAll(/# phase: (\w+)/g)];
+    return matches.length ? matches[matches.length - 1][1] : null;
+  }, [uploadLogKey, isUploading]);
 
-  // Decide UI state
   if (!project.last_build_hash || !project.last_build_zip) {
     return (
       <Card>
@@ -240,15 +125,9 @@ export default function UploadTab({
   const uploaded = selectedId
     ? project.last_uploads?.[selectedId] ?? null
     : null;
-  const isUploading = isUploadingNow;
-  const isBusy = isUploading;
   const isFresh = !!uploaded && uploaded.hash === project.last_build_hash;
   const canUpload =
-    podRunning &&
-    podReady &&
-    sshOk &&
-    tools?.has_runpodctl &&
-    !isUploading;
+    podRunning && podReady && sshOk && tools?.has_runpodctl && !isUploading;
 
   return (
     <div className="space-y-4">
@@ -261,48 +140,29 @@ export default function UploadTab({
             <Select
               value={selectedId}
               onChange={(e) => setSelectedId(e.target.value)}
-              disabled={isBusy}
+              disabled={isUploading}
             >
               {managed.map((m) => {
-                const live = livePods[m.id];
+                const live = livePods.get(m.id);
                 const gpu = live?.gpu_display_name ?? "—";
                 const count = live?.gpu_count ? ` ×${live.gpu_count}` : "";
-                const phase =
+                const phaseStr =
                   live?.desired_status === "EXITED" ||
                   live?.desired_status === "TERMINATED"
-                    ? "stopped"
+                    ? t("servers.row_stopped")
                     : live?.desired_status !== "RUNNING"
-                    ? "starting"
+                    ? t("servers.row_provisioning")
                     : m.ltx_state === "init"
-                    ? "needs setup"
-                    : "ready";
+                    ? t("servers.row_setting_up")
+                    : t("servers.row_ready");
                 return (
                   <option key={m.id} value={m.id}>
-                    {(m.name || m.id) + " · " + gpu + count + " · " + phase}
+                    {(m.name || m.id) + " · " + gpu + count + " · " + phaseStr}
                   </option>
                 );
               })}
             </Select>
           </div>
-
-          {selectedManaged && (
-            <div className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs">
-              <Row k="GPU" v={selectedLive?.gpu_display_name ?? "—"} />
-              <Row k="Status" v={podStatus.toLowerCase()} mono />
-              <Row k="ltx_state" v={selectedManaged.ltx_state} mono />
-              <Row
-                k="SSH"
-                v={
-                  probe === null
-                    ? t("ds.upload.checking_ssh")
-                    : sshOk
-                    ? `${probe.user}@${probe.host}:${probe.port}`
-                    : t("ds.upload.needs_ssh")
-                }
-                mono
-              />
-            </div>
-          )}
 
           {!podRunning ? (
             <Pill tone="warn">{t("ds.upload.needs_running")}</Pill>
@@ -313,19 +173,7 @@ export default function UploadTab({
               <Spinner /> {t("ds.upload.checking_ssh")}
             </Pill>
           ) : !sshOk ? (
-            <div className="flex items-center gap-2 flex-wrap">
-              <Pill tone="err">{t("ds.upload.needs_ssh")}</Pill>
-              {!probing && (
-                <Button variant="ghost" size="sm" onClick={runProbe}>
-                  ↻ {t("common.retry")}
-                </Button>
-              )}
-              {probe.error && (
-                <span className="text-xs text-neutral-500 truncate">
-                  {probe.error}
-                </span>
-              )}
-            </div>
+            <Pill tone="err">{t("ds.upload.needs_ssh")}</Pill>
           ) : (
             <Pill tone="ok">✓ {t("ds.upload.ready")}</Pill>
           )}
@@ -339,7 +187,7 @@ export default function UploadTab({
             <div className="flex-1" />
             <Button
               size="sm"
-              onClick={doInstallRunpodctl}
+              onClick={() => tasks.installRunpodctl()}
               disabled={installing || !tools.has_brew}
             >
               {installing ? (
@@ -395,20 +243,25 @@ export default function UploadTab({
               </div>
             </div>
             <div className="shrink-0 flex gap-2">
-              {isBusy ? (
-                <ProgressButton
+              {isUploading ? (
+                <ProgressBar
+                  variant="button"
                   pct={progress?.pct ?? 0}
-                  phase={phase}
-                  progressLabel={progress?.label ?? null}
+                  tone="info"
+                  label={
+                    progress
+                      ? `${progress.pct.toFixed(0)}% · ${progress.label}`
+                      : phase
+                      ? t(`ds.upload.phase_${phase}`, phase)
+                      : t("ds.upload.uploading")
+                  }
                 />
               ) : (
                 <Button onClick={doUpload} disabled={!canUpload}>
-                  {isFresh
-                    ? t("ds.upload.reupload")
-                    : t("ds.upload.upload")}
+                  {isFresh ? t("ds.upload.reupload") : t("ds.upload.upload")}
                 </Button>
               )}
-              {isFresh && !isBusy && (
+              {isFresh && !isUploading && (
                 <Button variant="ghost" onClick={onGoTraining}>
                   {t("tr.go_training")}
                 </Button>
@@ -416,14 +269,14 @@ export default function UploadTab({
             </div>
           </div>
 
-          {(isBusy || tasks.getLog(uploadLogKey ?? "").length > 0) && (
+          {(isUploading || hasUploadLog) && (
             <div className="mt-4 space-y-3">
               <div className="rounded-xl overflow-hidden border border-black/[0.08] dark:border-white/[0.08]">
                 <div className="flex items-center gap-2 px-3 py-1.5 bg-black/40 border-b border-white/5">
                   <span
                     className={
                       "w-2 h-2 rounded-full " +
-                      (isBusy
+                      (isUploading
                         ? "bg-blue-500 animate-pulse"
                         : isFresh
                         ? "bg-green-500"
@@ -447,8 +300,6 @@ export default function UploadTab({
         </Card>
       )}
 
-      {/* Список видео + импорт промптов с пода + авто-кепшен —
-          только когда на сервер залит актуальный билд */}
       {selectedId &&
         apiKey &&
         podReady &&
@@ -476,47 +327,6 @@ export default function UploadTab({
             />
           </>
         )}
-    </div>
-  );
-}
-
-function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3">
-      <span className="text-neutral-500">{k}</span>
-      <span className={"truncate " + (mono ? "font-mono" : "")}>{v}</span>
-    </div>
-  );
-}
-
-function ProgressButton({
-  pct,
-  phase,
-  progressLabel,
-}: {
-  pct: number;
-  phase: string | null;
-  progressLabel: string | null;
-}) {
-  const phaseLabel: Record<string, string> = {
-    bootstrap: "подготовка",
-    send_starting: "запуск",
-    transferring: "передача",
-    extracting: "распаковка",
-  };
-  const headline = progressLabel
-    ? `${pct.toFixed(0)}% · ${progressLabel}`
-    : (phase && phaseLabel[phase]) || "загрузка…";
-  const fill = Math.max(0, Math.min(100, pct));
-  return (
-    <div className="relative overflow-hidden rounded-lg bg-blue-500/20 text-blue-700 dark:text-blue-300 px-4 py-2 text-sm font-medium min-w-[180px]">
-      <div
-        className="absolute inset-y-0 left-0 bg-blue-500/40 transition-[width]"
-        style={{ width: `${fill}%` }}
-      />
-      <span className="relative inline-flex items-center gap-2 whitespace-nowrap">
-        <Spinner /> {headline}
-      </span>
     </div>
   );
 }

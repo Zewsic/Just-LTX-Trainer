@@ -1,3 +1,5 @@
+mod shell;
+mod tmux_task;
 mod ssh;
 mod http;
 mod transfer;
@@ -12,6 +14,7 @@ mod local_setup;
 mod dataset_build;
 mod dataset_upload;
 mod caption;
+mod training;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -50,6 +53,8 @@ pub fn run() {
             local_setup::install_runpodctl,
             dataset_build::build_dataset,
             dataset_build::copy_file,
+            dataset_build::read_text_file,
+            dataset_build::write_text_file,
             dataset_upload::upload_dataset,
             caption::check_caption_state,
             caption::start_caption,
@@ -59,6 +64,19 @@ pub fn run() {
             caption::read_pod_clip,
             caption::fetch_pod_captions,
             caption::write_pod_captions,
+            training::start_training,
+            training::export_training_config,
+            training::check_training_state,
+            training::tail_training_log,
+            training::reset_training,
+            training::list_validation_steps,
+            training::list_validation_files,
+            training::read_validation_file,
+            training::checkpoint_info,
+            training::checkpoint_send_start,
+            training::checkpoint_send_state,
+            training::checkpoint_send_stop,
+            training::runpodctl_receive_local,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

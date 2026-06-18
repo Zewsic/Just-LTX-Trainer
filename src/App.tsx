@@ -11,14 +11,28 @@ type Route =
   | { kind: "list" }
   | { kind: "detail"; id: string };
 
+/** Целевая «куда открыть» — навигация по клику на бадж в списке серверов. */
+export interface TrainingTarget {
+  project: string;
+  pod: string;
+  /** Уникальный nonce, чтобы Training.tsx срабатывал даже если выбраны те же значения. */
+  nonce: number;
+}
+
 export default function App() {
   const { t } = useTranslation();
   const [section, setSection] = useState<Section>("servers");
   const [serversRoute, setServersRoute] = useState<Route>({ kind: "list" });
+  const [trainingTarget, setTrainingTarget] = useState<TrainingTarget | null>(null);
 
   function go(s: Section) {
     setSection(s);
     if (s === "servers") setServersRoute({ kind: "list" });
+  }
+
+  function goTraining(project: string, pod: string) {
+    setTrainingTarget({ project, pod, nonce: Date.now() });
+    setSection("training");
   }
 
   return (
@@ -39,6 +53,7 @@ export default function App() {
             <Servers
               onOpen={(id) => setServersRoute({ kind: "detail", id })}
               onOpenSettings={() => go("settings")}
+              onOpenTraining={goTraining}
             />
           )}
           {section === "servers" && serversRoute.kind === "detail" && (
@@ -50,7 +65,7 @@ export default function App() {
           {section === "datasets" && (
             <Datasets onGoTraining={() => setSection("training")} />
           )}
-          {section === "training" && <Training />}
+          {section === "training" && <Training target={trainingTarget} />}
           {section === "settings" && <Settings />}
         </div>
       </main>

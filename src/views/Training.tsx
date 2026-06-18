@@ -1,43 +1,55 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import {
+  open as openDialog,
+  save as saveDialog,
+} from "@tauri-apps/plugin-dialog";
 import { invoke } from "@tauri-apps/api/core";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { Button, Card, Field, Pill, Select, Spinner, Textarea } from "../components/ui";
+import {
+  Button,
+  Card,
+  Field,
+  Input,
+  Pill,
+  Select,
+  Spinner,
+  Textarea,
+} from "../components/ui";
 import Modal from "../components/Modal";
 import {
+  aspectToWh,
   defaultTrainingConfig,
-  loadProject,
-  listProjects,
+  lastUploadedPod,
+  lengthToFrames,
   Project,
   RANK_OPTIONS,
-  saveProject,
   STEPS_MAX,
   STEPS_MIN,
   STEPS_STEP,
   TrainingConfig,
 } from "../lib/projects";
-import { loadManaged, ManagedPod, Pod, store } from "../lib/pods";
+import { ManagedPod, Pod, SshProbe, store } from "../lib/pods";
+import { useSshProbe, useTasks, useTrainingState } from "../lib/tasks";
+import TrainingActive from "./training/TrainingActive";
+import ValidationBlock from "./training/ValidationBlock";
+import type { TrainingTarget } from "../App";
 
 const NEW_SENTINEL = "__new__";
 
-interface SshProbe {
-  ok: boolean;
-  host: string;
-  port: number;
-  user: string;
-  key_used: string | null;
-  error: string | null;
-}
-
-export default function Training() {
+export default function Training({
+  target,
+}: {
+  target: TrainingTarget | null;
+}) {
   const { t } = useTranslation();
-  const [projects, setProjects] = useState<string[] | null>(null);
+  const tasks = useTasks();
+  const apiKey = tasks.apiKey;
+  const projects = tasks.projectList;
+  const managed = tasks.managed;
+  const livePods = tasks.pods;
+
   const [project, setProject] = useState<Project | null>(null);
-  const [apiKey, setApiKey] = useState<string | null>(null);
-  const [managed, setManaged] = useState<ManagedPod[]>([]);
-  const [livePods, setLivePods] = useState<Record<string, Pod>>({});
   const [selectedPodId, setSelectedPodId] = useState("");
-  const [probe, setProbe] = useState<SshProbe | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const saveTimer = useRef<number | null>(null);
@@ -47,63 +59,71 @@ export default function Training() {
     projectRef.current = project;
   }, [project]);
 
-  // initial load
+  // initial load: target → store → первый из списка.
   useEffect(() => {
+    if (project || !projects || projects.length === 0) return;
     (async () => {
-      const k = (await store.get<string>("runpod_key")) ?? "";
-      setApiKey(k || null);
-      try {
-        const list = await listProjects();
-        setProjects(list);
-        if (list.length > 0) {
-          setProject(await loadProject(list[0]));
-        }
-      } catch (e: any) {
-        setError(String(e));
+      let pick: string | null = null;
+      if (target?.project && projects.includes(target.project)) {
+        pick = target.project;
       }
-      const all = await loadManaged();
-      setManaged(all);
-      if (k) {
-        try {
-          const pods = await invoke<Pod[]>("list_pods", { apiKey: k });
-          const map: Record<string, Pod> = {};
-          for (const p of pods) map[p.id] = p;
-          setLivePods(map);
-        } catch {
-          /* noop */
-        }
+      if (!pick) {
+        const last = (await store.get<string>("training_last_project")) ?? "";
+        if (last && projects.includes(last)) pick = last;
       }
-      const preferred =
-        all.find((m) => m.ltx_state !== "init")?.id ?? all[0]?.id ?? "";
-      setSelectedPodId(preferred);
+      if (!pick) pick = projects[0];
+      const p = await tasks.loadProjectByName(pick);
+      if (p) setProject(p);
     })();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projects, target?.nonce]);
 
-  // SSH probe
+  // Если пришёл target — подцепляем его и для пода, иначе:
+  // store(`training_last_pod_<project>`) → lastUploadedPod → preferred ready.
   useEffect(() => {
-    if (!apiKey || !selectedPodId) {
-      setProbe(null);
-      return;
-    }
-    setProbe(null);
-    invoke<SshProbe>("pod_ssh_probe", {
-      apiKey,
-      podId: selectedPodId,
-    })
-      .then(setProbe)
-      .catch((e) =>
-        setProbe({
-          ok: false,
-          host: "",
-          port: 0,
-          user: selectedPodId,
-          key_used: null,
-          error: String(e),
-        }),
-      );
-  }, [apiKey, selectedPodId]);
+    if (!project) return;
+    (async () => {
+      let pick: string | null = null;
+      if (
+        target?.pod &&
+        target.project === project.name &&
+        managed.some((m) => m.id === target.pod)
+      ) {
+        pick = target.pod;
+      }
+      if (!pick) {
+        const k = `training_last_pod_${project.name}`;
+        const last = (await store.get<string>(k)) ?? "";
+        if (last && managed.some((m) => m.id === last)) pick = last;
+      }
+      if (!pick) {
+        const lu = lastUploadedPod(project);
+        if (lu && managed.some((m) => m.id === lu)) pick = lu;
+      }
+      if (!pick) {
+        pick =
+          managed.find((m) => m.ltx_state !== "init")?.id ??
+          managed[0]?.id ??
+          "";
+      }
+      if (pick && pick !== selectedPodId) setSelectedPodId(pick);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.name, managed.length, target?.nonce]);
 
-  // Patch + autosave
+  // Persist текущий выбор: проект и под (per-project).
+  useEffect(() => {
+    if (!project) return;
+    store.set("training_last_project", project.name).then(() => store.save());
+  }, [project?.name]);
+  useEffect(() => {
+    if (!project || !selectedPodId) return;
+    const k = `training_last_pod_${project.name}`;
+    store.set(k, selectedPodId).then(() => store.save());
+  }, [project?.name, selectedPodId]);
+
+  const probe = useSshProbe(selectedPodId);
+
   function patchProject(mut: (p: Project) => Project) {
     setProject((prev) => (prev ? mut(prev) : prev));
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
@@ -111,7 +131,7 @@ export default function Training() {
       const cur = projectRef.current;
       if (!cur) return;
       try {
-        const saved = await saveProject(cur);
+        const saved = await tasks.saveProject(cur);
         setProject((prev) =>
           prev && prev.name === saved.name ? saved : prev,
         );
@@ -123,18 +143,19 @@ export default function Training() {
 
   function handleSelectProject(value: string) {
     if (!value || value === project?.name) return;
-    loadProject(value).then(setProject).catch((e) => setError(String(e)));
+    tasks
+      .loadProjectByName(value)
+      .then((p) => {
+        if (p) setProject(p);
+      })
+      .catch((e) => setError(String(e)));
   }
 
-  // —————————————————— derived
   const selectedManaged = useMemo(
     () => managed.find((m) => m.id === selectedPodId) ?? null,
     [managed, selectedPodId],
   );
-  const selectedLive = useMemo(
-    () => livePods[selectedPodId] ?? null,
-    [livePods, selectedPodId],
-  );
+  const selectedLive = livePods.get(selectedPodId) ?? null;
 
   const podRunning = selectedLive?.desired_status === "RUNNING";
   const podReady = selectedManaged && selectedManaged.ltx_state !== "init";
@@ -214,17 +235,17 @@ export default function Training() {
             >
               {managed.length === 0 && <option value="">—</option>}
               {managed.map((m) => {
-                const live = livePods[m.id];
+                const live = livePods.get(m.id);
                 const gpu = live?.gpu_display_name ?? "—";
                 const phase =
                   live?.desired_status === "EXITED" ||
                   live?.desired_status === "TERMINATED"
-                    ? "stopped"
+                    ? t("servers.row_stopped")
                     : live?.desired_status !== "RUNNING"
-                    ? "starting"
+                    ? t("servers.row_provisioning")
                     : m.ltx_state === "init"
-                    ? "needs setup"
-                    : "ready";
+                    ? t("servers.row_setting_up")
+                    : t("servers.row_ready");
                 return (
                   <option key={m.id} value={m.id}>
                     {(m.name || m.id) + " · " + gpu + " · " + phase}
@@ -258,16 +279,84 @@ export default function Training() {
         </Card>
       )}
 
-      {/* SETTINGS */}
+      {/* ACTIVE / SETTINGS */}
       {settingsAvailable && project && (
-        <TrainingSettings
+        <SettingsOrActive
           project={project}
-          onChange={patchProject}
+          apiKey={apiKey}
+          podId={selectedPodId}
+          patchProject={patchProject}
           totalClips={totalClips}
           gpuName={selectedLive?.gpu_display_name ?? null}
         />
       )}
     </div>
+  );
+}
+
+function SettingsOrActive({
+  project,
+  apiKey,
+  podId,
+  patchProject,
+  totalClips,
+  gpuName,
+}: {
+  project: Project;
+  apiKey: string;
+  podId: string;
+  patchProject: (mut: (p: Project) => Project) => void;
+  totalClips: number;
+  gpuName: string | null;
+}) {
+  const tasks = useTasks();
+  const trState = useTrainingState(podId, project.name);
+  // Активная вьюха остаётся для running / done / failed — пользователь видит
+  // итоговый интерфейс после завершения и сам возвращается в настройки
+  // через кнопку «Back». Пока state не сброшен — мы тут.
+  const isActive =
+    !!trState &&
+    (trState.state === "running" ||
+      trState.state === "done" ||
+      trState.state === "failed");
+
+  if (isActive && trState) {
+    return (
+      <TrainingActive
+        project={project}
+        apiKey={apiKey}
+        podId={podId}
+        state={trState}
+        totalClips={totalClips}
+        onBack={async () => {
+          await tasks.resetTraining(podId, project.name);
+        }}
+      />
+    );
+  }
+  const trigger = (project.training.trigger_word ?? "")
+    .trim()
+    .replace(/[.\s]+$/g, "");
+  return (
+    <>
+      <TrainingSettings
+        project={project}
+        apiKey={apiKey}
+        podId={podId}
+        onChange={patchProject}
+        totalClips={totalClips}
+        gpuName={gpuName}
+      />
+      <ValidationBlock
+        apiKey={apiKey}
+        podId={podId}
+        projectName={project.name}
+        completedSteps={[]}
+        prompts={project.training.validation_prompts ?? []}
+        trigger={trigger}
+        mode="history"
+      />
+    </>
   );
 }
 
@@ -346,16 +435,21 @@ function Checks({
 
 function TrainingSettings({
   project,
+  apiKey,
+  podId,
   onChange,
   totalClips,
   gpuName,
 }: {
   project: Project;
+  apiKey: string;
+  podId: string;
   onChange: (mut: (p: Project) => Project) => void;
   totalClips: number;
   gpuName: string | null;
 }) {
   const { t } = useTranslation();
+  const tasks = useTasks();
   const cfg = project.training;
   const defaults = useMemo(
     () => defaultTrainingConfig({ clips: totalClips, gpu_name: gpuName }),
@@ -370,11 +464,15 @@ function TrainingSettings({
     defaults.enable_gradient_checkpointing!;
   const te8 =
     cfg.load_text_encoder_in_8bit ?? defaults.load_text_encoder_in_8bit!;
+  const expandable =
+    cfg.expandable_segments ?? defaults.expandable_segments ?? false;
+  const triggerWord = (cfg.trigger_word ?? "").trim();
   const validationPrompts = cfg.validation_prompts ?? [];
   const validationImages = cfg.validation_images ?? [];
 
   const [editFor, setEditFor] = useState<number | "new" | null>(null);
   const [draft, setDraft] = useState("");
+  const [startError, setStartError] = useState<string | null>(null);
 
   function patchTraining(mut: (c: TrainingConfig) => TrainingConfig) {
     onChange((p) => ({ ...p, training: mut(p.training) }));
@@ -508,6 +606,25 @@ function TrainingSettings({
             </div>
           </SettingRow>
 
+          {/* TRIGGER WORD */}
+          <SettingRow
+            label={t("tr.trigger.label")}
+            hint={t("tr.trigger.hint")}
+          >
+            <Input
+              value={cfg.trigger_word ?? ""}
+              onChange={(e) =>
+                patchTraining((c) => ({
+                  ...c,
+                  trigger_word: e.target.value || null,
+                }))
+              }
+              placeholder={t("tr.trigger.placeholder")}
+              autoComplete="off"
+              spellCheck={false}
+            />
+          </SettingRow>
+
           {/* VALIDATION */}
           <SettingRow
             label={t("tr.validation.label")}
@@ -536,7 +653,14 @@ function TrainingSettings({
                           className="flex-1 min-w-0 text-left text-sm hover:underline"
                           onClick={() => openEdit(i)}
                         >
-                          <span className="line-clamp-2">{p}</span>
+                          <span className="line-clamp-2 leading-relaxed">
+                            {triggerWord && (
+                              <span className="px-1.5 py-0.5 mr-1 rounded-md bg-blue-500/15 text-blue-700 dark:text-blue-300 font-mono text-[12px]">
+                                {triggerWord}
+                              </span>
+                            )}
+                            {p}
+                          </span>
                         </button>
                         <Button
                           size="sm"
@@ -565,6 +689,22 @@ function TrainingSettings({
                   </p>
                 ) : (
                   <>
+                    {validationPrompts.length > 0 &&
+                      (validationImages.length === 0 && mode === "i2v" ? (
+                        <p className="text-xs text-red-500 mb-2">
+                          {t("tr.validation.need_images", {
+                            n: validationPrompts.length,
+                          })}
+                        </p>
+                      ) : validationImages.length > 0 &&
+                        validationImages.length !== validationPrompts.length ? (
+                        <p className="text-xs text-red-500 mb-2">
+                          {t("tr.validation.count_mismatch", {
+                            imgs: validationImages.length,
+                            prompts: validationPrompts.length,
+                          })}
+                        </p>
+                      ) : null)}
                     {validationImages.length > 0 && (
                       <div className="grid grid-cols-4 gap-2 mb-2">
                         {validationImages.map((p, i) => (
@@ -620,13 +760,165 @@ function TrainingSettings({
                   }))
                 }
               />
+              <FlagToggle
+                label={t("tr.flags.expandable")}
+                hint={t("tr.flags.expandable_hint")}
+                value={expandable}
+                onChange={(v) =>
+                  patchTraining((c) => ({
+                    ...c,
+                    expandable_segments: v,
+                  }))
+                }
+              />
             </div>
           </SettingRow>
         </div>
       </Card>
 
-      <div className="flex justify-end">
-        <Button onClick={() => {}}>{t("tr.start_training")}</Button>
+      {cfg.raw_config_yaml && cfg.raw_config_yaml.trim() && (
+        <Card>
+          <div className="flex items-start gap-3">
+            <span className="w-8 h-8 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 inline-flex items-center justify-center text-sm shrink-0">
+              ⚡
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-sm font-semibold">
+                {t("tr.raw_banner_title")}
+              </div>
+              <div className="text-[11px] text-neutral-500 mt-0.5 leading-snug">
+                {t("tr.raw_banner_hint")}
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() =>
+                patchTraining((c) => ({ ...c, raw_config_yaml: null }))
+              }
+              className="!text-red-500"
+            >
+              {t("tr.raw_clear")}
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      <div className="flex justify-end items-center gap-3 flex-wrap">
+        {startError && (
+          <span className="text-xs text-red-500 max-w-md text-right">
+            {startError}
+          </span>
+        )}
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={async () => {
+            setStartError(null);
+            try {
+              const buckets = computeBuckets(project);
+              const clipCount = Object.values(project.last_build_clips || {})
+                .reduce((a, b) => a + (b ?? 0), 0);
+              const yaml = await tasks.exportTrainingConfig({
+                api_key: apiKey,
+                pod_id: podId,
+                project_name: project.name,
+                rank,
+                mode,
+                steps,
+                trigger_word: cfg.trigger_word ?? null,
+                validation_prompts: validationPrompts,
+                validation_images: validationImages,
+                enable_gradient_checkpointing: gradCkpt,
+                load_text_encoder_in_8bit: te8,
+                expandable_segments: expandable,
+                audio: !!project.audio,
+                clip_count: clipCount,
+                buckets,
+              });
+              const dest = await saveDialog({
+                defaultPath: `${project.name}.config.yaml`,
+                filters: [
+                  { name: "YAML", extensions: ["yaml", "yml"] },
+                ],
+              });
+              if (!dest) return;
+              await invoke("write_text_file", { path: dest, content: yaml });
+            } catch (e: any) {
+              setStartError(String(e));
+            }
+          }}
+        >
+          {t("tr.export_config")}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={async () => {
+            setStartError(null);
+            try {
+              const sel = await openDialog({
+                multiple: false,
+                directory: false,
+                filters: [
+                  { name: "YAML", extensions: ["yaml", "yml"] },
+                ],
+              });
+              if (!sel || Array.isArray(sel)) return;
+              const text = await invoke<string>("read_text_file", {
+                path: sel,
+              });
+              if (!text || !text.trim()) {
+                setStartError("Файл пустой");
+                return;
+              }
+              patchTraining((c) => ({ ...c, raw_config_yaml: text }));
+            } catch (e: any) {
+              setStartError(String(e));
+            }
+          }}
+        >
+          {t("tr.import_raw")}
+        </Button>
+        <Button
+          onClick={async () => {
+            setStartError(null);
+            const finalCfg: TrainingConfig = {
+              ...cfg,
+              rank,
+              mode,
+              steps,
+              enable_gradient_checkpointing: gradCkpt,
+              load_text_encoder_in_8bit: te8,
+              expandable_segments: expandable,
+            };
+            onChange((p) => ({ ...p, training: finalCfg }));
+            const buckets = computeBuckets(project);
+            const clipCount = Object.values(project.last_build_clips || {})
+              .reduce((a, b) => a + (b ?? 0), 0);
+            const r = await tasks.startTraining({
+              api_key: apiKey,
+              pod_id: podId,
+              project_name: project.name,
+              rank,
+              mode,
+              steps,
+              trigger_word: cfg.trigger_word ?? null,
+              validation_prompts: validationPrompts,
+              validation_images: validationImages,
+              enable_gradient_checkpointing: gradCkpt,
+              load_text_encoder_in_8bit: te8,
+              expandable_segments: expandable,
+              audio: !!project.audio,
+              clip_count: clipCount,
+              buckets,
+              raw_config_yaml: cfg.raw_config_yaml ?? null,
+            });
+            if (!r.ok) setStartError(r.error ?? "start failed");
+          }}
+        >
+          {t("tr.start_training")}
+        </Button>
       </div>
 
       {/* prompt edit modal */}
@@ -793,6 +1085,16 @@ function Row({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
 function basenameOf(p: string) {
   const i = Math.max(p.lastIndexOf("/"), p.lastIndexOf("\\"));
   return i >= 0 ? p.slice(i + 1) : p;
+}
+
+/** Бакеты для process_dataset: из last_build_buckets если есть, иначе один
+ *  бакет из aspect+length (старая логика fixed-режима). */
+function computeBuckets(project: Project): Array<[number, number, number]> {
+  const built = project.last_build_buckets;
+  if (built && built.length > 0) return built;
+  const [w, h] = aspectToWh(project.aspect_ratio);
+  const f = lengthToFrames(project.length_seconds);
+  return [[w, h, f]];
 }
 
 void NEW_SENTINEL; // reserved for future

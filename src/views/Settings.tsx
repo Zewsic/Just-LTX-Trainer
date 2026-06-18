@@ -4,6 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { Button, Card, Field, Input, Pill, Select, Spinner } from "../components/ui";
 import { setLang } from "../i18n";
 import { store } from "../lib/pods";
+import { useTasks } from "../lib/tasks";
 
 interface BalanceInfo {
   ok: boolean;
@@ -22,6 +23,7 @@ interface KeyStatus {
 
 export default function Settings() {
   const { t, i18n } = useTranslation();
+  const tasks = useTasks();
 
   const [runpodKey, setRunpodKey] = useState("");
   const [hfToken, setHfToken] = useState("");
@@ -84,6 +86,8 @@ export default function Settings() {
     savedRunpodKey.current = runpodKey;
     setSavedFlash(true);
     setTimeout(() => setSavedFlash(false), 1500);
+    await tasks.reloadSecrets();
+    await tasks.reloadPods();
     if (runpodKey) {
       refreshBalance(runpodKey);
       refreshKeyStatus(runpodKey);
@@ -169,6 +173,23 @@ export default function Settings() {
           )}
           <Button onClick={save}>{t("settings.save")}</Button>
         </div>
+      </Card>
+
+      <Card title={t("settings.notifications")}>
+        <label className="flex items-start gap-3 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={tasks.notificationsEnabled}
+            onChange={(e) => tasks.setNotificationsEnabled(e.target.checked)}
+            className="mt-0.5 w-4 h-4 accent-blue-500"
+          />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm">{t("settings.notifications")}</div>
+            <div className="text-[11px] text-neutral-500 mt-0.5">
+              {t("settings.notifications_hint")}
+            </div>
+          </div>
+        </label>
       </Card>
 
       <Card title={t("settings.ssh")}>

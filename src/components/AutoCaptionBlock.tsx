@@ -1,23 +1,21 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
-import { Button, Card, Mono, Pill, Spinner, Textarea } from "./ui";
+import { Button, Card, Mono, Pill, ProgressBar, Spinner, Textarea, Toggle } from "./ui";
 import XTermPanel, { XTermHandle } from "./XTerm";
 import Modal from "./Modal";
+import { GpuStats } from "./GpuStat";
 import { Project } from "../lib/projects";
-import { store } from "../lib/pods";
-import { captionKey, testCaptionKey, useTasks } from "../lib/tasks";
+import {
+  captionKey,
+  testCaptionKey,
+  useCaptionStatus,
+  useLiveProgress,
+  useNvidia,
+  useTasks,
+} from "../lib/tasks";
 
-interface CaptionStatus {
-  state: "pending" | "running" | "done" | "failed";
-  exit_code: number | null;
-  log_size: number;
-}
-
-type Provider = "qwen_omni" | "gemini_flash";
-
-const POLL_RUNNING = 1500;
-const POLL_IDLE = 8000;
+type Provider = "qwen_omni" | "gemini_flash" | "single";
 
 export default function AutoCaptionBlock({
   project,
@@ -31,6 +29,7 @@ export default function AutoCaptionBlock({
   onCaptionDone?: () => void;
 }) {
   const { t } = useTranslation();
+  const tasks = useTasks();
 
   const total = project.videos.length;
   const missing = useMemo(
@@ -43,19 +42,18 @@ export default function AutoCaptionBlock({
   const [instructions, setInstructions] = useState(
     "Provide only the final prompt, without any tags or explanations.",
   );
+  const [singleCaption, setSingleCaption] = useState("");
   const [overrideAll, setOverrideAll] = useState(false);
-  const [geminiKey, setGeminiKey] = useState<string>("");
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
 
-  const tasks = useTasks();
+  const status = useCaptionStatus(podId, project.name);
   const testing = tasks.isTesting(podId, project.name);
+  const nvidia = useNvidia(podId);
+  const captionLogKey = captionKey(podId, project.name);
+  const captionProgress = useLiveProgress(captionLogKey, "caption");
 
-  const [status, setStatus] = useState<CaptionStatus | null>(null);
   const termRef = useRef<XTermHandle>(null);
-  const tailPos = useRef(0);
-  const reportedRunning = useRef(false);
-  const tailBusy = useRef(false);
-  const tickBusy = useRef(false);
-
   const [testError, setTestError] = useState<string | null>(null);
   const [testResult, setTestResult] = useState<{
     caption: string;
@@ -64,63 +62,29 @@ export default function AutoCaptionBlock({
   } | null>(null);
   const blobUrlRef = useRef<string | null>(null);
 
-  // Загружаем ключ Gemini из настроек
+  // Уведомить родителя когда состояние стало done.
+  const wasRunningRef = useRef(false);
   useEffect(() => {
-    (async () => {
-      const k = (await store.get<string>("gemini_key")) ?? "";
-      setGeminiKey(k);
-    })();
-  }, []);
-
-  // Первичный опрос состояния — может уже что-то крутится в tmux
-  async function fetchStatus() {
-    try {
-      const s = await invoke<CaptionStatus>("check_caption_state", {
-        apiKey,
-        podId,
-        projectName: project.name,
-      });
-      setStatus(s);
-      return s;
-    } catch (e: any) {
-      console.error("caption state error", e);
-      return null;
+    if (status?.state === "running") wasRunningRef.current = true;
+    if (status?.state === "done" && wasRunningRef.current) {
+      wasRunningRef.current = false;
+      onCaptionDone?.();
     }
-  }
-
-  async function pumpTail() {
-    if (tailBusy.current) return;
-    tailBusy.current = true;
-    try {
-      const r = await invoke<{ total: number; content: string }>(
-        "tail_caption_log",
-        {
-          apiKey,
-          podId,
-          projectName: project.name,
-          since: tailPos.current,
-        },
-      );
-      if (r.content) termRef.current?.write(r.content);
-      tailPos.current = r.total;
-    } catch {
-      /* noop */
-    } finally {
-      tailBusy.current = false;
-    }
-  }
-
-  useEffect(() => {
-    fetchStatus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [project.name, podId]);
+  }, [status?.state]);
 
-  // Терминал тянет лог из глобального буфера TasksProvider'а — переживает
-  // переключение вкладок.
+  // Подписка терминала на лог captioning или test.
+  // Панель XTerm рендерится только когда есть что показывать → завязываем
+  // эффект и на видимость, иначе ref на первом рендере null и подписка
+  // не ставится.
   const termKey = testing
     ? testCaptionKey(podId, project.name)
-    : captionKey(podId, project.name);
+    : captionLogKey;
+  const running = status?.state === "running";
+  const showTerminal =
+    running || status?.state === "done" || status?.state === "failed" || testing;
   useEffect(() => {
+    if (!showTerminal) return;
     const term = termRef.current;
     if (!term) return;
     term.reset();
@@ -132,42 +96,7 @@ export default function AutoCaptionBlock({
     });
     return unsub;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [termKey]);
-
-  // Когда видим running — переходим в режим polling
-  useEffect(() => {
-    if (status?.state !== "running" && !reportedRunning.current) return;
-    if (status?.state === "running") {
-      if (!reportedRunning.current) {
-        // первый раз — затягиваем хвост лога
-        reportedRunning.current = true;
-        tailPos.current = Math.max(0, status.log_size - 64 * 1024);
-        termRef.current?.reset();
-        pumpTail();
-      }
-    }
-    const period =
-      status?.state === "running" ? POLL_RUNNING : POLL_IDLE;
-    const id = window.setInterval(async () => {
-      if (tickBusy.current) return;
-      tickBusy.current = true;
-      try {
-        const s = await fetchStatus();
-        if (s?.state === "running") {
-          await pumpTail();
-        } else if (s?.state === "done" || s?.state === "failed") {
-          // дотянуть хвост
-          await pumpTail();
-          window.clearInterval(id);
-          if (s.state === "done") onCaptionDone?.();
-        }
-      } finally {
-        tickBusy.current = false;
-      }
-    }, period);
-    return () => window.clearInterval(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status?.state]);
+  }, [termKey, showTerminal]);
 
   function closeTestModal() {
     setTestResult(null);
@@ -188,7 +117,7 @@ export default function AutoCaptionBlock({
       provider,
       instructions: instructions.trim() || null,
       audio: !!project.audio,
-      gemini_api_key: geminiKey || null,
+      gemini_api_key: tasks.geminiKey || null,
     });
     if (!r.ok) {
       setTestError(r.error ?? "test failed");
@@ -210,10 +139,33 @@ export default function AutoCaptionBlock({
     }
   }
 
+  async function applySingleCaption() {
+    setApplyError(null);
+    const text = singleCaption.trim();
+    if (!text) {
+      setApplyError(t("ds.caption.single_empty") as string);
+      return;
+    }
+    setApplying(true);
+    try {
+      const next: Project = {
+        ...project,
+        videos: project.videos.map((v) => {
+          const has = !!(v.prompt && v.prompt.trim());
+          if (has && !overrideAll) return v;
+          return { ...v, prompt: text };
+        }),
+      };
+      await tasks.saveProject(next);
+      onCaptionDone?.();
+    } catch (e: any) {
+      setApplyError(String(e));
+    } finally {
+      setApplying(false);
+    }
+  }
+
   async function run() {
-    termRef.current?.reset();
-    tailPos.current = 0;
-    reportedRunning.current = false;
     if (status?.state === "done" || status?.state === "failed") {
       try {
         await invoke("reset_caption", {
@@ -234,18 +186,13 @@ export default function AutoCaptionBlock({
           provider,
           instructions: instructions.trim() || null,
           audio: !!project.audio,
-          gemini_api_key: geminiKey || null,
+          gemini_api_key: tasks.geminiKey || null,
           override_all: overrideAll,
         },
       });
-      await fetchStatus();
+      tasks.refresh();
     } catch (e: any) {
       console.error(e);
-      setStatus({
-        state: "failed",
-        exit_code: null,
-        log_size: 0,
-      });
       termRef.current?.write("error: " + String(e) + "\r\n");
     }
   }
@@ -260,10 +207,7 @@ export default function AutoCaptionBlock({
     );
   }
 
-  const running = status?.state === "running";
-  const showTerminal =
-    running || status?.state === "done" || status?.state === "failed" || testing;
-  const geminiAvailable = !!geminiKey.trim();
+  const geminiAvailable = !!tasks.geminiKey.trim();
 
   return (
     <Card title={t("ds.caption.title")}>
@@ -283,43 +227,56 @@ export default function AutoCaptionBlock({
             <div className="text-xs text-neutral-500 mb-1.5">
               {t("ds.caption.provider")}
             </div>
-            <div className="inline-flex rounded-lg bg-black/[0.05] dark:bg-white/[0.06] p-0.5 text-xs">
-              <ProviderTab
-                active={provider === "qwen_omni"}
-                onClick={() => setProvider("qwen_omni")}
-                title={t("ds.caption.provider_qwen")}
-              />
-              <ProviderTab
-                active={provider === "gemini_flash"}
-                onClick={() =>
-                  geminiAvailable && setProvider("gemini_flash")
-                }
-                title={
-                  geminiAvailable
+            <Toggle<Provider>
+              size="sm"
+              value={provider}
+              onChange={setProvider}
+              items={[
+                { id: "qwen_omni", label: t("ds.caption.provider_qwen") },
+                {
+                  id: "gemini_flash",
+                  label: geminiAvailable
                     ? t("ds.caption.provider_gemini")
-                    : t("ds.caption.provider_gemini_no_key")
-                }
-                disabled={!geminiAvailable}
-              />
-            </div>
+                    : t("ds.caption.provider_gemini_no_key"),
+                  disabled: !geminiAvailable,
+                },
+                { id: "single", label: t("ds.caption.provider_single") },
+              ]}
+            />
             <div className="text-[11px] text-neutral-500 mt-1.5">
               {provider === "qwen_omni"
                 ? t("ds.caption.provider_qwen_hint")
-                : t("ds.caption.provider_gemini_hint")}
+                : provider === "gemini_flash"
+                ? t("ds.caption.provider_gemini_hint")
+                : t("ds.caption.provider_single_hint")}
             </div>
           </div>
 
-          <div>
-            <div className="text-xs text-neutral-500 mb-1.5">
-              {t("ds.caption.instructions")}
+          {provider === "single" ? (
+            <div>
+              <div className="text-xs text-neutral-500 mb-1.5">
+                {t("ds.caption.single_caption")}
+              </div>
+              <Textarea
+                rows={3}
+                value={singleCaption}
+                onChange={(e) => setSingleCaption(e.target.value)}
+                placeholder={t("ds.caption.single_placeholder")}
+              />
             </div>
-            <Textarea
-              rows={3}
-              value={instructions}
-              onChange={(e) => setInstructions(e.target.value)}
-              placeholder={t("ds.caption.instructions_placeholder")}
-            />
-          </div>
+          ) : (
+            <div>
+              <div className="text-xs text-neutral-500 mb-1.5">
+                {t("ds.caption.instructions")}
+              </div>
+              <Textarea
+                rows={3}
+                value={instructions}
+                onChange={(e) => setInstructions(e.target.value)}
+                placeholder={t("ds.caption.instructions_placeholder")}
+              />
+            </div>
+          )}
 
           <label className="flex items-start gap-3 cursor-pointer select-none">
             <input
@@ -337,40 +294,60 @@ export default function AutoCaptionBlock({
           </label>
 
           <div className="flex items-center gap-3">
-            <Pill>
-              {project.audio
-                ? t("ds.caption.audio_on")
-                : t("ds.caption.audio_off")}
-            </Pill>
+            {provider !== "single" && (
+              <Pill>
+                {project.audio
+                  ? t("ds.caption.audio_on")
+                  : t("ds.caption.audio_off")}
+              </Pill>
+            )}
             <div className="flex-1" />
-            <Button variant="ghost" onClick={runTest} disabled={testing}>
-              {testing ? (
-                <span className="inline-flex items-center gap-1.5">
-                  <Spinner /> {t("ds.caption.testing")}
-                </span>
-              ) : (
-                t("ds.caption.test")
-              )}
-            </Button>
-            <Button onClick={run} disabled={testing}>
-              {t("ds.caption.run")}
-            </Button>
+            {provider === "single" ? (
+              <Button onClick={applySingleCaption} disabled={applying}>
+                {applying ? (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Spinner /> {t("ds.caption.applying")}
+                  </span>
+                ) : (
+                  t("ds.caption.apply_single")
+                )}
+              </Button>
+            ) : (
+              <>
+                <Button variant="ghost" onClick={runTest} disabled={testing}>
+                  {testing ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <Spinner /> {t("ds.caption.testing")}
+                    </span>
+                  ) : (
+                    t("ds.caption.test")
+                  )}
+                </Button>
+                <Button onClick={run} disabled={testing}>
+                  {t("ds.caption.run")}
+                </Button>
+              </>
+            )}
           </div>
           {testError && (
             <div className="mt-2">
               <Mono>{testError}</Mono>
             </div>
           )}
+          {applyError && (
+            <div className="mt-2 text-xs text-red-500">{applyError}</div>
+          )}
         </div>
       )}
 
       {running && (
-        <div className="text-xs text-neutral-500 flex items-center gap-2 mb-3">
-          <Spinner />
-          <span>
-            {t("ds.caption.running")} {t("ds.caption.long_hint")}
-          </span>
-        </div>
+        <ProgressBar
+          pct={captionProgress?.pct ?? null}
+          tone="info"
+          label={t("ds.caption.running")}
+          value={captionProgress?.label ?? t("ds.caption.long_hint")}
+          className="mb-3"
+        />
       )}
 
       {status?.state === "done" && (
@@ -411,6 +388,11 @@ export default function AutoCaptionBlock({
         </div>
       )}
 
+      {(running || testing) && (
+        <div className="mt-4">
+          <GpuStats nvidia={nvidia} loadingLabel={t("detail.live_loading")} />
+        </div>
+      )}
 
       <Modal
         open={!!testResult}
@@ -453,32 +435,3 @@ export default function AutoCaptionBlock({
     </Card>
   );
 }
-
-function ProviderTab({
-  active,
-  onClick,
-  title,
-  disabled,
-}: {
-  active: boolean;
-  onClick: () => void;
-  title: string;
-  disabled?: boolean;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      disabled={disabled}
-      className={
-        "px-3 py-1.5 rounded-md transition " +
-        (active
-          ? "bg-white dark:bg-white/[0.12] shadow-sm font-medium"
-          : "text-neutral-500 hover:text-current") +
-        (disabled ? " opacity-50 cursor-not-allowed" : "")
-      }
-    >
-      {title}
-    </button>
-  );
-}
-

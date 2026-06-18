@@ -124,14 +124,8 @@ export function parseProgress(
   }
 
   if (kind === "init_model" || kind === "init_encoder" || kind === "caption") {
-    const fallbackLabel =
-      kind === "init_model"
-        ? "LTX-2.3 weights"
-        : kind === "init_encoder"
-        ? "Text encoder"
-        : "Captioning";
     if (kind === "caption") {
-      // rich progress: "Captioning ━━━━ 3/6 0:00:09 • 0:01:23"
+      // 1. Полный rich-progress c таймером: "━━━━ 3/6 0:00:09 • 0:01:23"
       const rich = lastMatch(
         /(\d+)\s*\/\s*(\d+)\s+\d+:\d{2}:\d{2}\s*[•·]\s*([\d:\-]+)/g,
         text,
@@ -144,16 +138,31 @@ export function parseProgress(
           return { pct: (x / y) * 100, label: `${x}/${y}${eta}` };
         }
       }
-      // captioning model loading
+      // 2. Total известен из "Found N media files to process."
+      const total = lastMatch(/Found (\d+) media files to process/g, text);
+      // 3. Усечённый rich (узкий терминал: "Captioning name ━ 3/6 …" или "3/6 …")
+      const truncated = lastMatch(/(?:━+|\s)(\d+)\/(\d+)(?:\s|$)/g, text);
+      if (truncated) {
+        const x = parseInt(truncated[1], 10);
+        const y = parseInt(truncated[2], 10);
+        if (y > 0) return { pct: (x / y) * 100, label: `${x}/${y}` };
+      }
+      // 4. Имя текущего клипа — захватываем последний "Captioning {file}"
+      const cur = lastMatch(/Captioning\s+(\S+\.\w{2,4})/g, text);
+      if (cur && total) {
+        const y = parseInt(total[1], 10);
+        return { pct: 0, label: `${cur[1]} · 0/${y}` };
+      }
+      // 5. captioning model loading — UI ставит свой label
       if (/Loading captioning model/.test(text) && !/Found \d+ media/.test(text)) {
-        return { pct: 0, label: "loading model…" };
+        return { pct: 0, label: "" };
       }
     }
     // tqdm: "NN%|"
     const last = lastMatch(/(\d+(?:\.\d+)?)%\|/g, text);
     if (last) {
       const pct = parseFloat(last[1]);
-      return { pct, label: fallbackLabel };
+      return { pct, label: "" };
     }
     return null;
   }
