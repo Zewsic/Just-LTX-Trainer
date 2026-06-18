@@ -128,6 +128,7 @@ From the same validation panel, **Download** opens a one-step flow: the pod send
 - **First run is slow.** Initial pod setup downloads ~30 GB of LTX 2.3 weights. Subsequent pods on the same account reuse the cache.
 - **OOM on training?** Turn on gradient checkpointing and 8-bit text encoder before lowering the rank.
 - **Mixed resolutions.** With No resize on, the trainer learns from all your aspect ratios at once — handy when your source footage isn't uniform.
+- **Batch training.** You can train multiples loras on same time on different pods.
 
 ---
 
