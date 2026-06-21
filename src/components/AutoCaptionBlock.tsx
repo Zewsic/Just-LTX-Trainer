@@ -44,8 +44,6 @@ export default function AutoCaptionBlock({
   );
   const [singleCaption, setSingleCaption] = useState("");
   const [overrideAll, setOverrideAll] = useState(false);
-  const [applying, setApplying] = useState(false);
-  const [applyError, setApplyError] = useState<string | null>(null);
 
   const status = useCaptionStatus(podId, project.name);
   const testing = tasks.isTesting(podId, project.name);
@@ -139,33 +137,13 @@ export default function AutoCaptionBlock({
     }
   }
 
-  async function applySingleCaption() {
-    setApplyError(null);
-    const text = singleCaption.trim();
-    if (!text) {
-      setApplyError(t("ds.caption.single_empty") as string);
+  async function run() {
+    if (provider === "single" && !singleCaption.trim()) {
+      termRef.current?.write(
+        "error: " + (t("ds.caption.single_empty") as string) + "\r\n",
+      );
       return;
     }
-    setApplying(true);
-    try {
-      const next: Project = {
-        ...project,
-        videos: project.videos.map((v) => {
-          const has = !!(v.prompt && v.prompt.trim());
-          if (has && !overrideAll) return v;
-          return { ...v, prompt: text };
-        }),
-      };
-      await tasks.saveProject(next);
-      onCaptionDone?.();
-    } catch (e: any) {
-      setApplyError(String(e));
-    } finally {
-      setApplying(false);
-    }
-  }
-
-  async function run() {
     if (status?.state === "done" || status?.state === "failed") {
       try {
         await invoke("reset_caption", {
@@ -185,6 +163,8 @@ export default function AutoCaptionBlock({
           project_name: project.name,
           provider,
           instructions: instructions.trim() || null,
+          single_caption:
+            provider === "single" ? singleCaption.trim() || null : null,
           audio: !!project.audio,
           gemini_api_key: tasks.geminiKey || null,
           override_all: overrideAll,
@@ -302,40 +282,30 @@ export default function AutoCaptionBlock({
               </Pill>
             )}
             <div className="flex-1" />
-            {provider === "single" ? (
-              <Button onClick={applySingleCaption} disabled={applying}>
-                {applying ? (
+            {provider !== "single" && (
+              <Button variant="ghost" onClick={runTest} disabled={testing}>
+                {testing ? (
                   <span className="inline-flex items-center gap-1.5">
-                    <Spinner /> {t("ds.caption.applying")}
+                    <Spinner /> {t("ds.caption.testing")}
                   </span>
                 ) : (
-                  t("ds.caption.apply_single")
+                  t("ds.caption.test")
                 )}
               </Button>
-            ) : (
-              <>
-                <Button variant="ghost" onClick={runTest} disabled={testing}>
-                  {testing ? (
-                    <span className="inline-flex items-center gap-1.5">
-                      <Spinner /> {t("ds.caption.testing")}
-                    </span>
-                  ) : (
-                    t("ds.caption.test")
-                  )}
-                </Button>
-                <Button onClick={run} disabled={testing}>
-                  {t("ds.caption.run")}
-                </Button>
-              </>
             )}
+            <Button
+              onClick={run}
+              disabled={
+                testing || (provider === "single" && !singleCaption.trim())
+              }
+            >
+              {t("ds.caption.run")}
+            </Button>
           </div>
           {testError && (
             <div className="mt-2">
               <Mono>{testError}</Mono>
             </div>
-          )}
-          {applyError && (
-            <div className="mt-2 text-xs text-red-500">{applyError}</div>
           )}
         </div>
       )}

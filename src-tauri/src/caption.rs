@@ -53,9 +53,11 @@ pub struct StartCaptionArgs {
     pub api_key: String,
     pub pod_id: String,
     pub project_name: String,
-    pub provider: String, // "qwen_omni" | "gemini_flash"
+    pub provider: String, // "qwen_omni" | "gemini_flash" | "single"
     #[serde(default)]
     pub instructions: Option<String>,
+    #[serde(default)]
+    pub single_caption: Option<String>,
     #[serde(default)]
     pub audio: bool,
     #[serde(default)]
@@ -70,8 +72,11 @@ pub async fn start_caption(
     args: StartCaptionArgs,
 ) -> Result<(), String> {
     let provider = args.provider.as_str();
-    if provider != "qwen_omni" && provider != "gemini_flash" {
+    if provider != "qwen_omni" && provider != "gemini_flash" && provider != "single" {
         return Err(format!("unknown provider: {}", provider));
+    }
+    if provider == "single" {
+        return start_caption_single(app, args).await;
     }
     let workers = if provider == "gemini_flash" { 4 } else { 1 };
     if provider == "gemini_flash"
@@ -176,6 +181,77 @@ echo 'caption: done'
         cli = cli_args.join(" "),
         merge = merge_step,
         provider_setup = provider_setup,
+    );
+
+    let (host, port) = resolve_pod_ssh_endpoint(&args.api_key, &args.pod_id).await?;
+    let keys = collect_keys(&app);
+    project_task(&args.project_name)
+        .start(&host, port, &keys, &inner_script)
+        .await
+}
+
+/// "Single" режим: один и тот же caption применяется ко всем клипам.
+/// Никакая модель не запускается — просто сканируем `ready/` и пишем
+/// captions.json напрямую. Merge с manual.json уважает override_all.
+async fn start_caption_single(
+    app: tauri::AppHandle,
+    args: StartCaptionArgs,
+) -> Result<(), String> {
+    let caption = args
+        .single_caption
+        .as_ref()
+        .map(|s| s.trim().to_string())
+        .unwrap_or_default();
+    if caption.is_empty() {
+        return Err("single caption is empty".into());
+    }
+    let dataset_dir = format!("/workspace/datasets/{}", args.project_name);
+    let override_flag = if args.override_all { "1" } else { "0" };
+
+    // Питон-скрипт делает всю работу на поде: листает ready/*, пишет captions.json,
+    // мержит с manual.json (если есть и не override).
+    let inner_script = format!(
+        r#"set -eu
+{path}
+cd "{dataset}"
+if [ -f captions.json ]; then
+  cp captions.json manual.json
+fi
+rm -f captions.json
+export LTX_SINGLE_CAPTION={caption_env}
+export LTX_OVERRIDE_ALL={override}
+python3 - <<'PYEOF'
+import json, os, glob, pathlib
+cap = os.environ.get('LTX_SINGLE_CAPTION', '').strip()
+override = os.environ.get('LTX_OVERRIDE_ALL', '0') == '1'
+ready = pathlib.Path('ready')
+if not ready.is_dir():
+    print('ready/ not found'); raise SystemExit(1)
+clips = sorted([p.name for p in ready.iterdir() if p.is_file()])
+manual = {{}}
+if not override:
+    try:
+        with open('manual.json') as f:
+            for e in json.load(f):
+                if isinstance(e, dict) and 'media_path' in e and 'caption' in e:
+                    manual[e['media_path']] = e['caption']
+    except Exception:
+        pass
+out = []
+for name in clips:
+    media_path = f'ready/{{name}}'
+    text = manual.get(media_path) or cap
+    out.append({{'media_path': media_path, 'caption': text}})
+with open('captions.json', 'w') as f:
+    json.dump(out, f, indent=2, ensure_ascii=False)
+print(f'single: wrote {{len(out)}} captions, {{len(manual)}} manual overrides kept')
+PYEOF
+echo 'caption: done'
+"#,
+        path = PATH_SETUP,
+        dataset = dataset_dir,
+        caption_env = shell::escape(&caption),
+        override = override_flag,
     );
 
     let (host, port) = resolve_pod_ssh_endpoint(&args.api_key, &args.pod_id).await?;

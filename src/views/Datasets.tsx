@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button, Card, Field, Input, Select, Toggle } from "../components/ui";
 import Modal from "../components/Modal";
@@ -19,7 +19,12 @@ export default function Datasets({
   const projects = tasks.projectList;
 
   const [project, setProject] = useState<Project | null>(null);
-  const [tab, setTab] = useState<"prep" | "upload">("prep");
+  const [tab, setTab] = useState<"prep" | "upload" | "projects">("prep");
+  const hidden = tasks.hiddenProjects;
+  const visibleProjects = useMemo(
+    () => (projects ? projects.filter((n) => !hidden.has(n)) : null),
+    [projects, hidden],
+  );
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -39,11 +44,23 @@ export default function Datasets({
       setCreateOpen(true);
       return;
     }
-    tasks.loadProjectByName(projects[0]).then((p) => {
+    const pick = (visibleProjects && visibleProjects[0]) ?? projects[0];
+    tasks.loadProjectByName(pick).then((p) => {
       if (p) setProject(p);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projects]);
+
+  // если текущий проект скрыли — переключаемся на первый видимый
+  useEffect(() => {
+    if (!project || !visibleProjects) return;
+    if (hidden.has(project.name) && visibleProjects.length > 0) {
+      tasks.loadProjectByName(visibleProjects[0]).then((p) => {
+        if (p) setProject(p);
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [hidden, project?.name]);
 
   function handleSelect(value: string) {
     if (value === NEW_SENTINEL) {
@@ -107,7 +124,7 @@ export default function Datasets({
               ) : (
                 <>
                   {!project && <option value="">—</option>}
-                  {projects.map((n) => (
+                  {(visibleProjects ?? projects).map((n) => (
                     <option key={n} value={n}>
                       {n}
                     </option>
@@ -117,12 +134,13 @@ export default function Datasets({
               )}
             </Select>
           </div>
-          <Toggle<"prep" | "upload">
+          <Toggle<"prep" | "upload" | "projects">
             value={tab}
             onChange={setTab}
             items={[
               { id: "prep", label: t("ds.tab_prep") },
               { id: "upload", label: t("ds.tab_upload") },
+              { id: "projects", label: t("ds.tab_projects") },
             ]}
           />
         </div>
@@ -151,6 +169,14 @@ export default function Datasets({
             if (fresh) setProject(fresh);
           }}
           onGoTraining={onGoTraining}
+        />
+      )}
+      {tab === "projects" && (
+        <ProjectsManageCard
+          allProjects={projects ?? []}
+          hidden={hidden}
+          onToggleHidden={(name, h) => tasks.setProjectHidden(name, h)}
+          currentName={project?.name ?? null}
         />
       )}
       {!project && projects !== null && projects.length === 0 && !createOpen && (
@@ -193,5 +219,64 @@ export default function Datasets({
         </Field>
       </Modal>
     </div>
+  );
+}
+
+function ProjectsManageCard({
+  allProjects,
+  hidden,
+  onToggleHidden,
+  currentName,
+}: {
+  allProjects: string[];
+  hidden: Set<string>;
+  onToggleHidden: (name: string, hidden: boolean) => void;
+  currentName: string | null;
+}) {
+  const { t } = useTranslation();
+  if (allProjects.length === 0) {
+    return (
+      <Card>
+        <p className="text-sm text-neutral-500">{t("ds.projects.empty")}</p>
+      </Card>
+    );
+  }
+  return (
+    <Card title={t("ds.projects.title")}>
+      <p className="text-xs text-neutral-500 mb-3">{t("ds.projects.hint")}</p>
+      <ul className="-mx-5 divide-y divide-black/[0.05] dark:divide-white/[0.07]">
+        {allProjects.map((name) => {
+          const isHidden = hidden.has(name);
+          const isCurrent = name === currentName;
+          return (
+            <li
+              key={name}
+              className="flex items-center gap-3 px-5 py-2.5 text-sm"
+            >
+              <span
+                className={
+                  "flex-1 truncate " +
+                  (isHidden ? "text-neutral-400 dark:text-neutral-500" : "")
+                }
+              >
+                {name}
+                {isCurrent && (
+                  <span className="ml-2 text-[10px] uppercase tracking-wider text-neutral-400">
+                    {t("ds.projects.current")}
+                  </span>
+                )}
+              </span>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => onToggleHidden(name, !isHidden)}
+              >
+                {isHidden ? t("ds.projects.show") : t("ds.projects.hide")}
+              </Button>
+            </li>
+          );
+        })}
+      </ul>
+    </Card>
   );
 }

@@ -55,7 +55,11 @@ export function defaultTrainingConfig(opts: {
     5000,
     Math.max(1000, 1500 + Math.floor(Math.max(0, clips - 1) / 50) * 500),
   );
-  const isHopperOrNewer = !!gpu_name && /\b(H100|H200|B200|B300)\b/i.test(gpu_name);
+  const isHopperOrNewer =
+    !!gpu_name &&
+    (/\b(H100|H200|B200|B300)\b/i.test(gpu_name) ||
+      /\bRTX\s*PRO\s*6000\b/i.test(gpu_name) ||
+      /\bPRO\s*6000\b/i.test(gpu_name));
   return {
     pretrain_signature: null,
     pretrain_done_at: 0,

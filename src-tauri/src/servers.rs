@@ -129,9 +129,14 @@ pub struct GpuType {
     pub id: String,
     pub display_name: String,
     pub memory_in_gb: Option<i64>,
+    /// Secure cloud on-demand цена.
     pub price_per_hr: Option<f64>,
+    /// Community cloud on-demand цена (дешевле, без SLA).
+    pub community_price_per_hr: Option<f64>,
     pub stock_status: Option<String>,
+    pub community_stock_status: Option<String>,
     pub available: bool,
+    pub community_available: bool,
     pub secure_cloud: bool,
     pub community_cloud: bool,
     /// "recommended" | "not_recommended" | null
@@ -140,8 +145,22 @@ pub struct GpuType {
 
 const ALLOWED_SUBSTR: &[&str] = &["H100", "H200", "B200", "B300"];
 
+fn has_pro_6000(upper: &str) -> bool {
+    // "RTX PRO 6000", "RTX 6000 Pro Blackwell" и т.п. — Blackwell-десктоп с 96GB.
+    let toks: Vec<&str> = upper
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .collect();
+    let has_pro = toks.iter().any(|t| *t == "PRO");
+    let has_6000 = toks.iter().any(|t| *t == "6000");
+    has_pro && has_6000
+}
+
 fn is_allowed(upper: &str) -> bool {
     if ALLOWED_SUBSTR.iter().any(|p| upper.contains(p)) {
+        return true;
+    }
+    if has_pro_6000(upper) {
         return true;
     }
     // L4 как отдельное слово, чтобы не зацепить L40 / L40S
@@ -152,6 +171,9 @@ fn is_allowed(upper: &str) -> bool {
 
 fn classify(upper: &str) -> Option<String> {
     if upper.contains("H200") && upper.contains("SXM") {
+        return Some("recommended".into());
+    }
+    if has_pro_6000(upper) {
         return Some("recommended".into());
     }
     if upper.split(|c: char| !c.is_ascii_alphanumeric()).any(|t| t == "L4") {
@@ -165,6 +187,9 @@ pub struct DeployArgs {
     pub api_key: String,
     pub gpu_type_id: String,
     pub name: String,
+    /// "SECURE" | "COMMUNITY". Если не задано — SECURE.
+    #[serde(default)]
+    pub cloud_type: Option<String>,
 }
 
 async fn fetch_account_pubkey(api_key: &str) -> String {
@@ -198,8 +223,12 @@ pub async fn deploy_pod(
     }
     let pubkey_env = fetch_account_pubkey(&args.api_key).await;
 
+    let cloud_type = match args.cloud_type.as_deref() {
+        Some("COMMUNITY") | Some("community") => "COMMUNITY",
+        _ => "SECURE",
+    };
     let input = json!({
-        "cloudType": "SECURE",
+        "cloudType": cloud_type,
         "gpuCount": 1,
         "volumeInGb": 350,
         "containerDiskInGb": 30,
@@ -240,9 +269,10 @@ pub async fn deploy_pod(
 
 #[tauri::command]
 pub async fn list_gpu_types(api_key: String) -> Result<Vec<GpuType>, String> {
-    // Запрашиваем secure on-demand цену (как на сайте RunPod), плюс прямое поле securePrice как фолбэк.
+    // Запрашиваем обе on-demand цены (secure + community) одной выборкой —
+    // используем GraphQL-алиасы, чтобы RunPod вернул два разных lowestPrice.
     let q = json!({
-        "query": "query { gpuTypes { id displayName memoryInGb secureCloud communityCloud securePrice lowestPrice(input:{gpuCount:1, secureCloud:true}) { uninterruptablePrice stockStatus } } }"
+        "query": "query { gpuTypes { id displayName memoryInGb secureCloud communityCloud securePrice communityPrice secure: lowestPrice(input:{gpuCount:1, secureCloud:true}) { uninterruptablePrice stockStatus } community: lowestPrice(input:{gpuCount:1, secureCloud:false}) { uninterruptablePrice stockStatus } } }"
     });
     let v = graphql(&api_key, q).await?;
     let arr = v
@@ -260,24 +290,45 @@ pub async fn list_gpu_types(api_key: String) -> Result<Vec<GpuType>, String> {
                 return None;
             }
             let tag = classify(&upper);
-            let stock = g
-                .pointer("/lowestPrice/stockStatus")
+            let secure_stock = g
+                .pointer("/secure/stockStatus")
                 .and_then(Value::as_str)
                 .map(String::from);
-            // Предпочтительно: lowestPrice (secureCloud:true) → securePrice → None.
-            let price = g
-                .pointer("/lowestPrice/uninterruptablePrice")
+            let community_stock = g
+                .pointer("/community/stockStatus")
+                .and_then(Value::as_str)
+                .map(String::from);
+            // Предпочтительно: lowestPrice → прямое поле как фолбэк.
+            let secure_price = g
+                .pointer("/secure/uninterruptablePrice")
                 .and_then(Value::as_f64)
                 .or_else(|| g.get("securePrice").and_then(Value::as_f64));
-            let available = matches!(stock.as_deref(), Some("High") | Some("Medium") | Some("Low"))
-                && price.is_some();
+            let community_price = g
+                .pointer("/community/uninterruptablePrice")
+                .and_then(Value::as_f64)
+                .or_else(|| g.get("communityPrice").and_then(Value::as_f64));
+            let secure_available = matches!(
+                secure_stock.as_deref(),
+                Some("High") | Some("Medium") | Some("Low")
+            ) && secure_price.is_some();
+            let community_available = matches!(
+                community_stock.as_deref(),
+                Some("High") | Some("Medium") | Some("Low")
+            ) && community_price.is_some();
+            // GPU попадает в список, если доступен хотя бы в одном из облаков.
+            if !secure_available && !community_available {
+                return None;
+            }
             Some(GpuType {
                 id: g.get("id").and_then(Value::as_str).unwrap_or("").into(),
                 display_name: display,
                 memory_in_gb: g.get("memoryInGb").and_then(Value::as_i64),
-                price_per_hr: price,
-                stock_status: stock,
-                available,
+                price_per_hr: secure_price,
+                community_price_per_hr: community_price,
+                stock_status: secure_stock,
+                community_stock_status: community_stock,
+                available: secure_available,
+                community_available,
                 secure_cloud: g
                     .get("secureCloud")
                     .and_then(Value::as_bool)

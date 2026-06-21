@@ -180,6 +180,8 @@ export interface TasksApi {
   reloadProjectList: () => Promise<void>;
   loadProjectByName: (name: string) => Promise<Project | null>;
   saveProject: (p: Project) => Promise<Project>;
+  hiddenProjects: Set<string>;
+  setProjectHidden: (name: string, hidden: boolean) => Promise<void>;
 
   // local tools
   localTools: LocalTools | null;
@@ -506,6 +508,28 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     reloadProjectList();
   }, [reloadProjectList]);
+
+  // hidden projects (per-machine UI preference; do not touch on-disk projects)
+  const [hiddenProjects, setHiddenProjectsState] = useState<Set<string>>(
+    new Set(),
+  );
+  useEffect(() => {
+    (async () => {
+      const arr = (await store.get<string[]>("hidden_projects")) ?? [];
+      setHiddenProjectsState(new Set(arr));
+    })();
+  }, []);
+  const setProjectHidden = useCallback(async (name: string, hidden: boolean) => {
+    let next: Set<string> = new Set();
+    setHiddenProjectsState((prev) => {
+      next = new Set(prev);
+      if (hidden) next.add(name);
+      else next.delete(name);
+      return next;
+    });
+    await store.set("hidden_projects", Array.from(next));
+    await store.save();
+  }, []);
 
   // ---- local tools
   const [localTools, setLocalTools] = useState<LocalTools | null>(null);
@@ -1663,6 +1687,8 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     reloadProjectList,
     loadProjectByName,
     saveProject,
+    hiddenProjects,
+    setProjectHidden,
     localTools,
     installing,
     reloadLocalTools,

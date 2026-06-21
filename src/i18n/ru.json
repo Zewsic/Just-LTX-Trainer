@@ -17,6 +17,15 @@
     "new_project_create": "Создать",
     "tab_prep": "Подготовка",
     "tab_upload": "Загрузка",
+    "tab_projects": "Проекты",
+    "projects": {
+      "title": "Проекты",
+      "hint": "Скрой ненужные проекты из дропдауна. Файлы на диске остаются.",
+      "empty": "Пока нет проектов.",
+      "current": "текущий",
+      "hide": "Скрыть",
+      "show": "Показать"
+    },
     "upload_soon": "",
     "upload": {
       "no_built": "Сначала собери датасет.",
@@ -128,6 +137,10 @@
       "prompt_placeholder": "Опиши клип.",
       "prompt_save": "Сохранить",
       "prompt_clear": "Очистить",
+      "bulk_prompt": "Промпт всем",
+      "bulk_prompt_title": "Один промпт на все клипы",
+      "bulk_prompt_hint": "Заменит промпт у {{n}} клипа(ов). Пусто — очистит у всех.",
+      "bulk_apply": "Применить ко всем",
 
       "settings_title": "Параметры",
       "aspect": "Соотношение",
@@ -224,6 +237,11 @@
     "tag_recommended": "Рекомендуется",
     "tag_for_tests": "Только для тестов",
     "tag_unavailable": "Нет в наличии",
+    "cloud_type": "Облако",
+    "cloud_secure": "Secure",
+    "cloud_community": "Community",
+    "cloud_secure_hint": "Дата-центры RunPod, SLA.",
+    "cloud_community_hint": "Партнёрские хосты, дешевле.",
     "next": "Дальше",
     "name": "Имя",
     "summary": "Создаём",

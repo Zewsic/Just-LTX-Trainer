@@ -46,6 +46,8 @@ export default function PrepTab({
   const installLog = tasksApi.installing.ffmpeg.log;
   const [promptFor, setPromptFor] = useState<number | null>(null);
   const [promptDraft, setPromptDraft] = useState("");
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [bulkDraft, setBulkDraft] = useState("");
   const [dragOver, setDragOver] = useState(false);
 
   const [currentHash, setCurrentHash] = useState<string | null>(null);
@@ -174,6 +176,21 @@ export default function PrepTab({
     setPromptDraft("");
   }
 
+  function openBulkPrompt() {
+    setBulkDraft("");
+    setBulkOpen(true);
+  }
+
+  function applyBulkPrompt() {
+    const value = bulkDraft.trim();
+    onChange((p) => ({
+      ...p,
+      videos: p.videos.map((v) => ({ ...v, prompt: value || null })),
+    }));
+    setBulkOpen(false);
+    setBulkDraft("");
+  }
+
   function clearPrompt(idx: number) {
     onChange((p) => ({
       ...p,
@@ -212,9 +229,20 @@ export default function PrepTab({
           <Card
             title={t("ds.prep.videos_title")}
             action={
-              <Button size="sm" onClick={pickVideos}>
-                ＋ {t("ds.prep.add_videos")}
-              </Button>
+              <div className="flex gap-2">
+                {project.videos.length > 0 && (
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={openBulkPrompt}
+                  >
+                    {t("ds.prep.bulk_prompt")}
+                  </Button>
+                )}
+                <Button size="sm" onClick={pickVideos}>
+                  ＋ {t("ds.prep.add_videos")}
+                </Button>
+              </div>
             }
           >
             {project.videos.length === 0 ? (
@@ -470,6 +498,33 @@ export default function PrepTab({
           rows={5}
           value={promptDraft}
           onChange={(e) => setPromptDraft(e.target.value)}
+          placeholder={t("ds.prep.prompt_placeholder")}
+        />
+      </Modal>
+
+      <Modal
+        open={bulkOpen}
+        onClose={() => setBulkOpen(false)}
+        title={t("ds.prep.bulk_prompt_title")}
+        footer={
+          <>
+            <Button variant="ghost" onClick={() => setBulkOpen(false)}>
+              {t("common.cancel")}
+            </Button>
+            <Button onClick={applyBulkPrompt}>
+              {t("ds.prep.bulk_apply")}
+            </Button>
+          </>
+        }
+      >
+        <p className="text-xs text-neutral-500 mb-3">
+          {t("ds.prep.bulk_prompt_hint", { n: project.videos.length })}
+        </p>
+        <Textarea
+          autoFocus
+          rows={5}
+          value={bulkDraft}
+          onChange={(e) => setBulkDraft(e.target.value)}
           placeholder={t("ds.prep.prompt_placeholder")}
         />
       </Modal>

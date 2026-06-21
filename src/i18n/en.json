@@ -17,6 +17,15 @@
     "new_project_create": "Create",
     "tab_prep": "Prepare",
     "tab_upload": "Upload",
+    "tab_projects": "Projects",
+    "projects": {
+      "title": "Projects",
+      "hint": "Hide projects you don't need in the dropdown. Files on disk stay intact.",
+      "empty": "No projects yet.",
+      "current": "current",
+      "hide": "Hide",
+      "show": "Show"
+    },
     "upload_soon": "",
     "upload": {
       "no_built": "Build the dataset first.",
@@ -128,6 +137,10 @@
       "prompt_placeholder": "Describe this clip.",
       "prompt_save": "Save",
       "prompt_clear": "Clear",
+      "bulk_prompt": "Prompt for all",
+      "bulk_prompt_title": "One prompt for every clip",
+      "bulk_prompt_hint": "Will replace prompts on {{n}} clip(s). Leave empty to clear all.",
+      "bulk_apply": "Apply to all",
 
       "settings_title": "Settings",
       "aspect": "Aspect",
@@ -224,6 +237,11 @@
     "tag_recommended": "Recommended",
     "tag_for_tests": "For tests only",
     "tag_unavailable": "Unavailable",
+    "cloud_type": "Cloud",
+    "cloud_secure": "Secure",
+    "cloud_community": "Community",
+    "cloud_secure_hint": "RunPod-managed datacenters, SLA-backed.",
+    "cloud_community_hint": "Vetted partner hosts, lower price.",
     "next": "Next",
     "name": "Name",
     "summary": "Creating",

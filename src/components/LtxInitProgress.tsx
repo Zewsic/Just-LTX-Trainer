@@ -41,7 +41,9 @@ export default function LtxInitProgress({
   }, [init]);
 
   const [error, setError] = useState<string | null>(null);
-  const [started, setStarted] = useState(false);
+  // Setup стартует автоматически после создания пода — пользователь не должен
+  // жать "Start". Кнопка "Retry" нужна только когда какой-то шаг упал.
+  const [started, setStarted] = useState(true);
   const completedRef = useRef(false);
   const startedStepsRef = useRef<Set<StepId>>(new Set());
 
@@ -79,17 +81,24 @@ export default function LtxInitProgress({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStep, podId]);
 
-  // Авто-старт следующего pending после нажатия "Start setup".
-  // Сам прогон конвейера (после первого старта) делает TasksProvider в tick().
+  // Если все шаги done — отметить под как ready, независимо от того,
+  // нажимали ли мы Start в этой сессии. Без этого пользователь, заглянув
+  // на страницу после завершения, видит "needs_setup" вечно.
   useEffect(() => {
-    if (!started || !init) return;
+    if (!init) return;
     const allDone = STEPS.every((s) => stepStatus(s).state === "done");
-    const anyFailed = STEPS.some((s) => stepStatus(s).state === "failed");
     if (allDone && !completedRef.current) {
       completedRef.current = true;
       onComplete();
-      return;
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [init]);
+
+  // Авто-старт следующего pending шага. Запускается сразу при монтировании
+  // (started=true по дефолту); конвейер дальше ведёт TasksProvider в tick().
+  useEffect(() => {
+    if (!started || !init) return;
+    const anyFailed = STEPS.some((s) => stepStatus(s).state === "failed");
     if (anyFailed) return;
     const anyRunning = STEPS.some((s) => stepStatus(s).state === "running");
     if (anyRunning) return;
@@ -225,15 +234,14 @@ export default function LtxInitProgress({
       )}
 
       <div className="flex items-center gap-3">
-        {!anyRunning && (
+        {anyFailed ? (
           <button
             onClick={start}
             className="px-4 py-2 rounded-lg text-sm font-medium bg-blue-500 hover:bg-blue-600 text-white shadow-sm"
           >
-            {anyFailed ? "↻ " + t("common.retry") : t("detail.setup_start")}
+            ↻ {t("common.retry")}
           </button>
-        )}
-        {anyRunning && (
+        ) : (
           <p className="text-xs text-neutral-500">{t("init.in_progress")}</p>
         )}
       </div>
