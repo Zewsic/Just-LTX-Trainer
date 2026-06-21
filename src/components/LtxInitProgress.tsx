@@ -127,7 +127,6 @@ export default function LtxInitProgress({
   }, [started, init]);
 
   const anyFailed = STEPS.some((s) => stepStatus(s).state === "failed");
-  const anyRunning = STEPS.some((s) => stepStatus(s).state === "running");
 
   async function start() {
     setError(null);
