@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
-import { open as openShell } from "@tauri-apps/plugin-shell";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { invoke } from "@tauri-apps/api/core";
 import { Button, Card, Mono, Pill, Spinner, Textarea } from "../../components/ui";
@@ -84,11 +83,12 @@ export default function PrepTab({
 
   // Tools-state живёт в TasksProvider; провайдер сам их подгружает на старте.
   useEffect(() => {
-    if (tools && tools.has_brew && tools.has_ffmpeg && !project.local_setup_done) {
+    // Для сборки датасета локально нужен только ffmpeg (brew — деталь macOS).
+    if (tools && tools.has_ffmpeg && !project.local_setup_done) {
       onChange((p) => ({ ...p, local_setup_done: true }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tools?.has_brew, tools?.has_ffmpeg]);
+  }, [tools?.has_ffmpeg]);
 
   // Drag&drop файлов в окно
   useEffect(() => {
@@ -200,16 +200,12 @@ export default function PrepTab({
     }));
   }
 
-  const allOk = tools?.has_brew && tools?.has_ffmpeg;
+  const allOk = tools?.has_ffmpeg;
 
   return (
     <div className="space-y-4 relative">
-      {/* Tools card — показываем только если что-то не ок */}
-      {tools && !allOk && tools.os !== "macos" && tools.os !== "darwin" ? (
-        <Card title={t("ds.prep.tools_title")}>
-          <p className="text-sm text-neutral-500">{t("ds.prep.macos_only")}</p>
-        </Card>
-      ) : tools && !allOk ? (
+      {/* Tools card — показываем только если ffmpeg ещё не найден */}
+      {tools && !allOk ? (
         <ToolsCard
           tools={tools}
           installing={installing}
@@ -678,38 +674,35 @@ function ToolsCard({
   onInstall: () => void;
 }) {
   const { t } = useTranslation();
+  const canAutoInstall = !!tools.ffmpeg_installer;
   return (
     <Card title={t("ds.prep.tools_title")}>
       <div className="space-y-3">
-        <ToolRow
-          label="Homebrew"
-          ok={tools.has_brew}
-          action={
-            !tools.has_brew && (
-              <Button size="sm" onClick={() => openShell("https://brew.sh")}>
-                {t("ds.prep.brew_install")}
-              </Button>
-            )
-          }
-        />
         <ToolRow
           label="ffmpeg"
           ok={tools.has_ffmpeg}
           action={
             !tools.has_ffmpeg &&
-            tools.has_brew && (
+            canAutoInstall && (
               <Button size="sm" onClick={onInstall} disabled={installing}>
                 {installing ? (
                   <span className="inline-flex items-center gap-1.5">
                     <Spinner /> {t("ds.prep.ffmpeg_installing")}
                   </span>
                 ) : (
-                  t("ds.prep.ffmpeg_install")
+                  t("ds.prep.ffmpeg_install", { pm: tools.ffmpeg_installer })
                 )}
               </Button>
             )
           }
         />
+        {!tools.has_ffmpeg && (
+          // Инструкция для ручной установки — всегда как fallback, а когда
+          // авто-установщика нет, это единственный путь.
+          <p className="text-xs text-neutral-500 whitespace-pre-line">
+            {tools.ffmpeg_manual}
+          </p>
+        )}
         {installLog && (
           <div>
             <Mono>{installLog}</Mono>

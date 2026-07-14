@@ -142,18 +142,34 @@ echo bootstrap_done
     );
     exec_remote(&host, port, "root", &keys, &bootstrap).await?;
 
-    // Spawn local `runpodctl send`. Заворачиваем в `script -q /dev/null`,
-    // чтобы у дочернего процесса был псевдо-TTY — иначе runpodctl
-    // блок-буферизует stdout и мы не видим строчку «code is: ...» вовремя.
+    // Spawn local `runpodctl send`.
     let _ = app.emit(
         "ds_upload:phase",
         json!({ "phase": "send_starting", "pod_id": pod_id, "project": project.name }),
     );
-    let mut send = Command::new("script")
-        .args(["-q", "/dev/null"])
-        .arg(&runpodctl)
-        .arg("send")
-        .arg(&zip)
+    // На Unix заворачиваем в `script -q /dev/null`, чтобы у дочернего процесса
+    // был псевдо-TTY — иначе runpodctl блок-буферизует stdout и мы не видим
+    // строчку «code is: ...» вовремя. На Windows `script` нет: запускаем
+    // runpodctl напрямую (Go пишет в stdout без буферизации) и прячем консоль.
+    let mut cmd = {
+        #[cfg(not(target_os = "windows"))]
+        {
+            let mut c = Command::new("script");
+            c.args(["-q", "/dev/null"])
+                .arg(&runpodctl)
+                .arg("send")
+                .arg(&zip);
+            c
+        }
+        #[cfg(target_os = "windows")]
+        {
+            let mut c = Command::new(&runpodctl);
+            c.arg("send").arg(&zip);
+            crate::local_setup::hide_console(&mut c);
+            c
+        }
+    };
+    let mut send = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true)

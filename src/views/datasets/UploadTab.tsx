@@ -185,10 +185,12 @@ export default function UploadTab({
           <div className="flex items-center gap-3">
             <Pill tone="warn">{t("ds.upload.tools_runpodctl_missing")}</Pill>
             <div className="flex-1" />
+            {/* Авто-установка кроссплатформенная: brew на macOS, иначе
+                скачиваем бинарь из GitHub-релизов. */}
             <Button
               size="sm"
               onClick={() => tasks.installRunpodctl()}
-              disabled={installing || !tools.has_brew}
+              disabled={installing}
             >
               {installing ? (
                 <span className="inline-flex items-center gap-1.5">
@@ -199,11 +201,6 @@ export default function UploadTab({
               )}
             </Button>
           </div>
-          {!tools.has_brew && (
-            <p className="text-xs text-neutral-500 mt-2">
-              {t("ds.prep.brew_missing_title")}
-            </p>
-          )}
           {installLog && (
             <div className="mt-3">
               <Mono>{installLog}</Mono>

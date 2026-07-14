@@ -132,6 +132,10 @@ export interface LocalTools {
   brew_path: string | null;
   ffmpeg_path: string | null;
   runpodctl_path: string | null;
+  /** Пакетный менеджер для авто-установки ffmpeg на этой ОС, либо null. */
+  ffmpeg_installer: string | null;
+  /** Инструкция по ручной установке ffmpeg под текущую ОС. */
+  ffmpeg_manual: string;
 }
 
 export const ASPECT_OPTIONS = ["16:9", "4:3", "1:1", "3:4", "9:16"] as const;

@@ -1,4 +1,4 @@
-use crate::local_setup::find_executable;
+use crate::local_setup::{find_executable, hide_console};
 use crate::projects::{load_project_inner, projects_dir, sanitize, save_project_inner};
 use serde::Serialize;
 use serde_json::json;
@@ -297,21 +297,20 @@ pub async fn build_dataset(
 }
 
 async fn ffprobe_has_audio(ffprobe: &str, path: &str) -> Result<bool, String> {
-    let out = Command::new(ffprobe)
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "a",
-            "-show_entries",
-            "stream=index",
-            "-of",
-            "csv=p=0",
-            path,
-        ])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(ffprobe);
+    cmd.args([
+        "-v",
+        "error",
+        "-select_streams",
+        "a",
+        "-show_entries",
+        "stream=index",
+        "-of",
+        "csv=p=0",
+        path,
+    ]);
+    hide_console(&mut cmd);
+    let out = cmd.output().await.map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Ok(false);
     }
@@ -319,21 +318,20 @@ async fn ffprobe_has_audio(ffprobe: &str, path: &str) -> Result<bool, String> {
 }
 
 async fn ffprobe_video_info(ffprobe: &str, path: &str) -> Result<(u32, u32, f64), String> {
-    let out = Command::new(ffprobe)
-        .args([
-            "-v",
-            "error",
-            "-select_streams",
-            "v:0",
-            "-show_entries",
-            "stream=width,height,r_frame_rate",
-            "-of",
-            "csv=p=0",
-            path,
-        ])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(ffprobe);
+    cmd.args([
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=width,height,r_frame_rate",
+        "-of",
+        "csv=p=0",
+        path,
+    ]);
+    hide_console(&mut cmd);
+    let out = cmd.output().await.map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(format!(
             "ffprobe video info failed: {}",
@@ -372,19 +370,18 @@ fn parse_rational(s: &str) -> Result<f64, String> {
 }
 
 async fn ffprobe_duration(ffprobe: &str, path: &str) -> Result<f64, String> {
-    let out = Command::new(ffprobe)
-        .args([
-            "-v",
-            "error",
-            "-show_entries",
-            "format=duration",
-            "-of",
-            "default=nokey=1:noprint_wrappers=1",
-            path,
-        ])
-        .output()
-        .await
-        .map_err(|e| e.to_string())?;
+    let mut cmd = Command::new(ffprobe);
+    cmd.args([
+        "-v",
+        "error",
+        "-show_entries",
+        "format=duration",
+        "-of",
+        "default=nokey=1:noprint_wrappers=1",
+        path,
+    ]);
+    hide_console(&mut cmd);
+    let out = cmd.output().await.map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err(format!(
             "ffprobe failed: {}",
@@ -441,6 +438,7 @@ async fn run_ffmpeg(
     cmd.args(["-y", out.to_str().unwrap_or_default()]);
     cmd.stderr(Stdio::piped());
     cmd.stdout(Stdio::null());
+    hide_console(&mut cmd);
     let mut child = cmd.spawn().map_err(|e| e.to_string())?;
     if let Some(stderr) = child.stderr.take() {
         let mut reader = BufReader::new(stderr).lines();

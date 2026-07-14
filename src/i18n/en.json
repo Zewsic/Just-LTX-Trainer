@@ -120,7 +120,7 @@
       "brew_install": "Install Homebrew",
       "brew_ok": "Homebrew",
       "ffmpeg_missing": "ffmpeg",
-      "ffmpeg_install": "Install ffmpeg",
+      "ffmpeg_install": "Install ffmpeg ({{pm}})",
       "ffmpeg_installing": "Installing ffmpeg…",
       "ffmpeg_ok": "ffmpeg",
       "macos_only": "macOS only.",
