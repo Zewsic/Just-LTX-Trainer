@@ -29,6 +29,7 @@ anyhow = "1"
 thiserror = "1"
 shellexpand = "3"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+base64 = "0.22"
 
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 notify-rust = "4"

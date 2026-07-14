@@ -5,6 +5,7 @@ import Servers from "./views/Servers";
 import ServerDetail from "./views/ServerDetail";
 import Datasets from "./views/Datasets";
 import Training from "./views/Training";
+import Project from "./views/Project";
 import Settings from "./views/Settings";
 
 type Route =
@@ -66,6 +67,7 @@ export default function App() {
             <Datasets onGoTraining={() => setSection("training")} />
           )}
           {section === "training" && <Training target={trainingTarget} />}
+          {section === "project" && <Project />}
           {section === "settings" && <Settings />}
         </div>
       </main>

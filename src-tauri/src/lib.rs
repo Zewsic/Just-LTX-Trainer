@@ -77,6 +77,10 @@ pub fn run() {
             training::checkpoint_send_state,
             training::checkpoint_send_stop,
             training::runpodctl_receive_local,
+            training::download_checkpoint_to_results,
+            training::download_sample_to_results,
+            training::list_local_results,
+            training::reveal_in_file_manager,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

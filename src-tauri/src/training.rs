@@ -1325,29 +1325,29 @@ pub struct ValidationFile {
     pub size: usize,
 }
 
-#[tauri::command]
-pub async fn read_validation_file(
-    app: tauri::AppHandle,
-    api_key: String,
-    pod_id: String,
-    project_name: String,
-    step: u32,
-    filename: String,
-) -> Result<ValidationFile, String> {
+/// Путь к сэмплу/картинке валидации на поде. Видео живут в
+/// `output/samples`, картинки — в `input_images`.
+fn validation_file_path(project_name: &str, filename: &str) -> Result<String, String> {
     if filename.contains('/') || filename.contains("..") {
         return Err("invalid filename".into());
     }
-    let _ = step; // step нужен для сигнатуры, но путь уникален и без него
-    let (host, port) = resolve_pod_ssh_endpoint(&api_key, &pod_id).await?;
-    let keys = collect_keys(&app);
-    // Видео живут в output/samples, картинки — в input_images.
-    let path = if filename.starts_with("step_") {
-        format!("{}/{}", samples_dir(&project_name), filename)
+    if filename.starts_with("step_") {
+        Ok(format!("{}/{}", samples_dir(project_name), filename))
     } else if filename.starts_with("img") {
-        format!("{}/{}", input_images_dir(&project_name), filename)
+        Ok(format!("{}/{}", input_images_dir(project_name), filename))
     } else {
-        return Err("invalid filename".into());
-    };
+        Err("invalid filename".into())
+    }
+}
+
+async fn fetch_validation_file_b64(
+    host: &str,
+    port: u16,
+    keys: &[PathBuf],
+    project_name: &str,
+    filename: &str,
+) -> Result<String, String> {
+    let path = validation_file_path(project_name, filename)?;
     let script = format!(
         r#"set -eu
 if [ ! -f "{p}" ]; then echo "not found"; exit 1; fi
@@ -1355,10 +1355,13 @@ base64 -w 0 "{p}"
 "#,
         p = path
     );
-    let out = exec_remote(&host, port, "root", &keys, &script).await?;
-    let b64: String = out.chars().filter(|c| !c.is_whitespace()).collect();
+    let out = exec_remote(host, port, "root", keys, &script).await?;
+    Ok(out.chars().filter(|c| !c.is_whitespace()).collect())
+}
+
+fn mime_for_filename(filename: &str) -> String {
     let lower = filename.to_lowercase();
-    let mime = if lower.ends_with(".mp4") {
+    if lower.ends_with(".mp4") {
         "video/mp4"
     } else if lower.ends_with(".webm") {
         "video/webm"
@@ -1371,12 +1374,160 @@ base64 -w 0 "{p}"
     } else {
         "application/octet-stream"
     }
-    .to_string();
+    .to_string()
+}
+
+#[tauri::command]
+pub async fn read_validation_file(
+    app: tauri::AppHandle,
+    api_key: String,
+    pod_id: String,
+    project_name: String,
+    step: u32,
+    filename: String,
+) -> Result<ValidationFile, String> {
+    let _ = step; // step нужен для сигнатуры, но путь уникален и без него
+    let (host, port) = resolve_pod_ssh_endpoint(&api_key, &pod_id).await?;
+    let keys = collect_keys(&app);
+    let b64 = fetch_validation_file_b64(&host, port, &keys, &project_name, &filename).await?;
     Ok(ValidationFile {
         size: (b64.len() / 4) * 3,
-        mime,
+        mime: mime_for_filename(&filename),
         b64,
     })
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Локальное сохранение результатов («Сохранять результаты»): чекпоинты и
+// sample-видео копируются на диск пользователя по мере создания, чтобы
+// оставаться доступными после выключения пода.
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Скачивает чекпоинт заданного шага в `<project>/results/checkpoints/`
+/// под именем `<project>_<rank>rank_<step>steps.safetensors`. Не открывает
+/// UI-модалку — работает синхронно от начала (rename+send) до конца
+/// (receive), поэтому пригодно для фонового авто-сохранения.
+#[tauri::command]
+pub async fn download_checkpoint_to_results(
+    app: tauri::AppHandle,
+    api_key: String,
+    pod_id: String,
+    project_name: String,
+    rank: u32,
+    step: u32,
+) -> Result<String, String> {
+    checkpoint_send_start(
+        app.clone(),
+        api_key.clone(),
+        pod_id.clone(),
+        project_name.clone(),
+        rank,
+        step,
+    )
+    .await?;
+
+    let (host, port) = resolve_pod_ssh_endpoint(&api_key, &pod_id).await?;
+    let keys = collect_keys(&app);
+    let task = send_task(&project_name, step);
+
+    let code = loop {
+        let st = task.state(&host, port, &keys).await?;
+        if st.state == "failed" {
+            return Err(format!(
+                "checkpoint send failed for {} step {}",
+                project_name, step
+            ));
+        }
+        let tail = task.tail(&host, port, &keys, 0).await?;
+        if let Some(c) = parse_runpodctl_code(&strip_ansi(&tail.content)) {
+            break c;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    };
+
+    let runpodctl = find_executable("runpodctl")
+        .ok_or_else(|| "runpodctl не установлен локально".to_string())?;
+    let dest_dir = crate::projects::project_results_dir(&app, &project_name)?.join("checkpoints");
+    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+
+    let status = Command::new(&runpodctl)
+        .arg("receive")
+        .arg(&code)
+        .current_dir(&dest_dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .status()
+        .await
+        .map_err(|e| format!("spawn: {}", e))?;
+    let _ = task.reset(&host, port, &keys).await;
+    if !status.success() {
+        return Err(format!("runpodctl receive exit: {}", status));
+    }
+    let stub = shell::download_stub(&project_name, rank, step);
+    Ok(dest_dir.join(format!("{}.safetensors", stub)).to_string_lossy().to_string())
+}
+
+/// Скачивает один sample-файл (видео/картинку) валидации в
+/// `<project>/results/samples/`, если его там ещё нет.
+#[tauri::command]
+pub async fn download_sample_to_results(
+    app: tauri::AppHandle,
+    api_key: String,
+    pod_id: String,
+    project_name: String,
+    filename: String,
+) -> Result<(), String> {
+    let dest_dir = crate::projects::project_results_dir(&app, &project_name)?.join("samples");
+    let dest = dest_dir.join(&filename);
+    if dest.exists() {
+        return Ok(());
+    }
+    let (host, port) = resolve_pod_ssh_endpoint(&api_key, &pod_id).await?;
+    let keys = collect_keys(&app);
+    let b64 = fetch_validation_file_b64(&host, port, &keys, &project_name, &filename).await?;
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64)
+        .map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
+    std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[derive(Serialize)]
+pub struct LocalResults {
+    pub dir: String,
+    pub checkpoint_count: u32,
+    pub sample_count: u32,
+}
+
+#[tauri::command]
+pub fn list_local_results(app: tauri::AppHandle, project_name: String) -> Result<LocalResults, String> {
+    let dir = crate::projects::project_results_dir(&app, &project_name)?;
+    let count_entries = |sub: &str| -> u32 {
+        std::fs::read_dir(dir.join(sub))
+            .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.path().is_file()).count() as u32)
+            .unwrap_or(0)
+    };
+    Ok(LocalResults {
+        dir: dir.to_string_lossy().to_string(),
+        checkpoint_count: count_entries("checkpoints"),
+        sample_count: count_entries("samples"),
+    })
+}
+
+/// Открывает путь в файловом менеджере ОС (Проводник/Finder/xdg-open).
+#[tauri::command]
+pub fn reveal_in_file_manager(path: String) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let res = std::process::Command::new("explorer").arg(&path).spawn();
+    #[cfg(target_os = "macos")]
+    let res = std::process::Command::new("open").arg(&path).spawn();
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let res = std::process::Command::new("xdg-open").arg(&path).spawn();
+
+    res.map(|_| ()).map_err(|e| e.to_string())
 }
 
 #[derive(Serialize)]
@@ -1448,6 +1599,7 @@ pub async fn checkpoint_send_start(
     api_key: String,
     pod_id: String,
     project_name: String,
+    rank: u32,
     step: u32,
 ) -> Result<(), String> {
     let ckpt_path = format!(
@@ -1470,14 +1622,28 @@ if [ -f "{p}" ]; then echo OK; else echo MISSING; fi
         return Err(format!("checkpoint not found: {}", ckpt_path));
     }
 
+    // runpodctl отдаёт файл получателю под его исходным именем, поэтому
+    // сначала кладём переименованную копию рядом и шлём уже её —
+    // так скачанный файл сразу называется по конвенции проекта.
+    let stub = shell::download_stub(&project_name, rank, step);
+    let renamed_path = format!(
+        "{}/.send/{}.safetensors",
+        checkpoints_dir(&project_name),
+        stub
+    );
+
     // Tmux уже даёт нам pty (см. tmux_task.rs `-x 250 -y 50`), так что
     // runpodctl видит свой stdout как терминал и сразу пишет «Code is: …».
     // Никакая обёртка `script` не нужна.
     let inner = format!(
         r#"set -eu
-runpodctl send {p}
+mkdir -p {send_dir}
+cp {src} {dst}
+runpodctl send {dst}
 "#,
-        p = shell::escape(&ckpt_path)
+        send_dir = shell::escape(&format!("{}/.send", checkpoints_dir(&project_name))),
+        src = shell::escape(&ckpt_path),
+        dst = shell::escape(&renamed_path),
     );
     send_task(&project_name, step)
         .start(&host, port, &keys, &inner)

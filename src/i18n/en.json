@@ -6,7 +6,8 @@
     "servers": "Servers",
     "datasets": "Dataset",
     "training": "Training",
-    "settings": "Settings"
+    "settings": "Settings",
+    "project": "Project"
   },
   "ds": {
     "title": "Dataset",
@@ -17,15 +18,6 @@
     "new_project_create": "Create",
     "tab_prep": "Prepare",
     "tab_upload": "Upload",
-    "tab_projects": "Projects",
-    "projects": {
-      "title": "Projects",
-      "hint": "Hide projects you don't need in the dropdown. Files on disk stay intact.",
-      "empty": "No projects yet.",
-      "current": "current",
-      "hide": "Hide",
-      "show": "Show"
-    },
     "upload_soon": "",
     "upload": {
       "no_built": "Build the dataset first.",
@@ -124,7 +116,6 @@
       "ffmpeg_installing": "Installing ffmpeg…",
       "ffmpeg_ok": "ffmpeg",
       "macos_only": "macOS only.",
-
       "videos_title": "Sources",
       "add_videos": "Add",
       "no_videos": "Empty. Drop or pick files.",
@@ -132,7 +123,6 @@
       "add_prompt": "+ prompt",
       "delete_prompt": "Clear prompt",
       "delete_video": "Remove",
-
       "prompt_modal_title": "{{name}}",
       "prompt_placeholder": "Describe this clip.",
       "prompt_save": "Save",
@@ -141,7 +131,6 @@
       "bulk_prompt_title": "One prompt for every clip",
       "bulk_prompt_hint": "Will replace prompts on {{n}} clip(s). Leave empty to clear all.",
       "bulk_apply": "Apply to all",
-
       "settings_title": "Settings",
       "aspect": "Aspect",
       "length": "Length",
@@ -157,7 +146,6 @@
       "audio": "Audio",
       "audio_on": "Yes",
       "audio_off": "No",
-
       "build": "Build",
       "build_running": "Building…",
       "build_failed": "Build failed",
@@ -258,7 +246,6 @@
     "cost": "$/hr",
     "created": "Created",
     "address": "Address",
-
     "section_setup": "LTX-2 setup",
     "setup_intro": "Packages, env, weights — all over SSH.",
     "setup_start": "Start",
@@ -267,19 +254,16 @@
     "setup_done_hint": "Server ready for training.",
     "needs_hf": "Add HuggingFace token in Settings.",
     "needs_ssh": "Waiting for SSH…",
-
     "section_ssh": "Connection",
     "ssh_ok": "SSH",
     "ssh_failed": "SSH unavailable",
     "ssh_waiting": "Waiting for SSH",
-
     "section_gpu_live": "GPU",
     "live_loading": "nvidia-smi…",
     "vram": "VRAM",
     "power": "Power",
     "util": "Util",
     "temp": "Temp",
-
     "actions_start": "Start",
     "actions_stop": "Stop",
     "actions_restart": "Restart",
@@ -422,6 +406,13 @@
       "copy_code": "Copy code",
       "copied": "Copied",
       "saved_to": "Saved to: {{path}}"
+    },
+    "results_server": {
+      "title": "Results & server",
+      "save_results": "Save results",
+      "save_results_hint": "Auto-download every checkpoint and sample video locally as they're created during training.",
+      "shutdown_after_training": "Shut down server after training completes",
+      "shutdown_after_training_hint": "Stop the pod once training finishes successfully and every file up to the last step has been saved."
     }
   },
   "settings": {
@@ -451,5 +442,28 @@
     "invalid": "error",
     "notifications": "OS notifications",
     "notifications_hint": "When a long task finishes."
+  },
+  "proj": {
+    "title": "Project",
+    "list_title": "Projects",
+    "list_hint": "Archive projects you don't need in the picker. Files on disk stay intact.",
+    "empty": "No projects yet.",
+    "current": "current",
+    "archive": "Archive",
+    "unarchive": "Unarchive",
+    "detail_title": "Details",
+    "detail_created": "Created",
+    "detail_updated": "Updated",
+    "detail_clips": "Clips",
+    "detail_rank": "Rank",
+    "detail_steps": "Steps",
+    "detail_mode": "Mode",
+    "detail_no_training": "No training config yet.",
+    "results_title": "Results",
+    "results_hint": "Checkpoints and sample videos saved locally, available even after the pod is shut down.",
+    "results_empty": "No local results yet. Enable \"Save results\" on the Training tab.",
+    "results_checkpoints": "{{n}} checkpoint(s)",
+    "results_samples": "{{n}} sample video(s)",
+    "results_open": "Open in file explorer"
   }
 }

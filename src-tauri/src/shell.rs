@@ -26,3 +26,10 @@ pub fn safe_name(s: &str) -> String {
         })
         .collect()
 }
+
+/// Имя скачиваемого файла чекпоинта (без расширения):
+/// `<project, пробелы→дефисы>_<rank>rank_<steps>steps`.
+/// Например: `lexy-sexy_32rank_2000steps`.
+pub fn download_stub(project: &str, rank: u32, steps: u32) -> String {
+    format!("{}_{}rank_{}steps", project.trim().replace(' ', "-"), rank, steps)
+}

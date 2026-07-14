@@ -641,6 +641,15 @@ export function TasksProvider({ children }: { children: ReactNode }) {
   // Чтобы не дублировать уведомления о завершении валидации, помним какие
   // checkpoint-step'ы уже «прозвенели».
   const validationsNotifiedRef = useRef<Map<string, Set<number>>>(new Map());
+  // «Сохранять результаты»: какие step'ы уже скачиваются/скачаны локально
+  // (чекпоинт + сэмплы) — держим сам промис, чтобы и не дублировать вызов
+  // на каждом тике, и иметь возможность дождаться его перед shutdown.
+  const savedStepsRef = useRef<Map<string, Map<number, Promise<void>>>>(
+    new Map(),
+  );
+  // «Завершить работу сервера после обучения»: чтобы не дёргать pod_action
+  // больше одного раза за прогон.
+  const shutdownFiredRef = useRef<Set<string>>(new Set());
 
   const prevKeysRef = useRef<Map<string, PodTask>>(new Map());
   const ticking = useRef(false);
@@ -903,6 +912,62 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // «Сохранять результаты»: скачивает чекпоинт + sample-видео заданного шага
+  // в локальную папку результатов проекта. Дедуплицируется через
+  // savedStepsRef, чтобы не скачивать один и тот же шаг на каждом тике.
+  const saveResultsForStep = useCallback(
+    (
+      ak: string,
+      podId: string,
+      projectName: string,
+      rank: number,
+      step: number,
+    ): Promise<void> => {
+      const key = `${podId}:${projectName}`;
+      const byStep = savedStepsRef.current.get(key) ?? new Map<number, Promise<void>>();
+      savedStepsRef.current.set(key, byStep);
+      const existing = byStep.get(step);
+      if (existing) return existing;
+
+      const p = (async () => {
+        try {
+          await invoke("download_checkpoint_to_results", {
+            apiKey: ak,
+            podId,
+            projectName,
+            rank,
+            step,
+          });
+        } catch {
+          /* ignore — чекпоинт можно скачать вручную из вкладки Обучение */
+        }
+        try {
+          const files = await invoke<Array<{ video: string | null }>>(
+            "list_validation_files",
+            { apiKey: ak, podId, projectName, step },
+          );
+          await Promise.all(
+            files
+              .filter((f) => !!f.video)
+              .map((f) =>
+                invoke("download_sample_to_results", {
+                  apiKey: ak,
+                  podId,
+                  projectName,
+                  filename: f.video,
+                }).catch(() => {}),
+              ),
+          );
+        } catch {
+          /* ignore */
+        }
+      })();
+      byStep.set(step, p);
+      return p;
+    },
+    [],
+  );
 
   // ---- main tick: live pods, ssh probes, nvidia, init/caption state, log tails
   const tick = useCallback(async () => {
@@ -1195,6 +1260,16 @@ export function TasksProvider({ children }: { children: ReactNode }) {
                 }
                 validationsNotifiedRef.current.set(key, seenSet);
                 trainingStatesRef.current.set(key, tr);
+
+                // «Сохранять результаты»: по мере появления новых step'ов
+                // валидации — скачиваем их чекпоинт и sample-видео локально.
+                if (proj.training.save_results !== false) {
+                  const rank = proj.training.rank ?? 32;
+                  for (const s of tr.validations_done) {
+                    void saveResultsForStep(ak, pod.id, proj.name, rank, s);
+                  }
+                }
+
                 if (tr.state === "running") {
                   const k = trainKey(pod.id, proj.name);
                   const since = tailPosRef.current.get(k) ?? 0;
@@ -1253,6 +1328,36 @@ export function TasksProvider({ children }: { children: ReactNode }) {
                     state: "failed",
                     label: `train · ${proj.name}`,
                   });
+                } else if (tr.state === "done") {
+                  // Обучение полностью и успешно завершилось (exit code 0).
+                  // «Завершить сервер» — только один раз за прогон, и только
+                  // после того как все файлы вплоть до последнего шага уже
+                  // сохранены локально (если save_results включён).
+                  if (
+                    proj.training.shutdown_after_training &&
+                    !shutdownFiredRef.current.has(key)
+                  ) {
+                    shutdownFiredRef.current.add(key);
+                    if (proj.training.save_results !== false) {
+                      const rank = proj.training.rank ?? 32;
+                      await Promise.all(
+                        tr.validations_done.map((s) =>
+                          saveResultsForStep(ak, pod.id, proj.name, rank, s),
+                        ),
+                      );
+                    }
+                    try {
+                      await invoke("pod_action", {
+                        args: {
+                          api_key: ak,
+                          pod_id: pod.id,
+                          action: "stop",
+                        },
+                      });
+                    } catch {
+                      /* ignore */
+                    }
+                  }
                 }
               } catch {
                 /* ignore */
@@ -1538,6 +1643,8 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       const stateKey = `${args.pod_id}:${args.project_name}`;
       clearLog(k);
       validationsNotifiedRef.current.delete(stateKey);
+      savedStepsRef.current.delete(stateKey);
+      shutdownFiredRef.current.delete(stateKey);
       // Сразу очищаем старое состояние (если был failed/done от прошлого
       // прогона), чтобы вью не показывала ошибку поверх нового запуска.
       trainingStatesRef.current.delete(stateKey);
@@ -1641,6 +1748,8 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       const key = `${pod_id}:${project}`;
       trainingStatesRef.current.delete(key);
       validationsNotifiedRef.current.delete(key);
+      savedStepsRef.current.delete(key);
+      shutdownFiredRef.current.delete(key);
       setTrainingStates(new Map(trainingStatesRef.current));
       clearLog(trainKey(pod_id, project));
       tick();

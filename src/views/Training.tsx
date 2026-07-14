@@ -351,6 +351,7 @@ function SettingsOrActive({
         apiKey={apiKey}
         podId={podId}
         projectName={project.name}
+        rank={project.training.rank ?? 32}
         completedSteps={[]}
         prompts={project.training.validation_prompts ?? []}
         trigger={trigger}
@@ -466,6 +467,9 @@ function TrainingSettings({
     cfg.load_text_encoder_in_8bit ?? defaults.load_text_encoder_in_8bit!;
   const expandable =
     cfg.expandable_segments ?? defaults.expandable_segments ?? false;
+  const saveResults = cfg.save_results ?? defaults.save_results ?? true;
+  const shutdownAfterTraining =
+    cfg.shutdown_after_training ?? defaults.shutdown_after_training ?? false;
   const triggerWord = (cfg.trigger_word ?? "").trim();
   const validationPrompts = cfg.validation_prompts ?? [];
   const validationImages = cfg.validation_images ?? [];
@@ -773,6 +777,33 @@ function TrainingSettings({
               />
             </div>
           </SettingRow>
+        </div>
+      </Card>
+
+      <Card title={t("tr.results_server.title")}>
+        <div className="space-y-2">
+          <FlagToggle
+            label={t("tr.results_server.save_results")}
+            hint={t("tr.results_server.save_results_hint")}
+            value={saveResults}
+            onChange={(v) =>
+              patchTraining((c) => ({
+                ...c,
+                save_results: v,
+              }))
+            }
+          />
+          <FlagToggle
+            label={t("tr.results_server.shutdown_after_training")}
+            hint={t("tr.results_server.shutdown_after_training_hint")}
+            value={shutdownAfterTraining}
+            onChange={(v) =>
+              patchTraining((c) => ({
+                ...c,
+                shutdown_after_training: v,
+              }))
+            }
+          />
         </div>
       </Card>
 

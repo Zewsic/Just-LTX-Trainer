@@ -38,6 +38,10 @@ export interface TrainingConfig {
   enable_gradient_checkpointing: boolean | null;
   load_text_encoder_in_8bit: boolean | null;
   expandable_segments: boolean | null;
+  /** Автоматически скачивать локально все чекпоинты и sample-видео по мере создания. */
+  save_results: boolean | null;
+  /** Остановить под, когда обучение полностью и успешно завершится. */
+  shutdown_after_training: boolean | null;
   /** Если задан — UI-параметры игнорируем, шлём этот YAML как config.yaml. */
   raw_config_yaml: string | null;
 }
@@ -72,6 +76,8 @@ export function defaultTrainingConfig(opts: {
     enable_gradient_checkpointing: isHopperOrNewer,
     load_text_encoder_in_8bit: isHopperOrNewer,
     expandable_segments: false,
+    save_results: true,
+    shutdown_after_training: false,
     raw_config_yaml: null,
   };
 }

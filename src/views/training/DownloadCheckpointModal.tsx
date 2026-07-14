@@ -29,12 +29,14 @@ export default function DownloadCheckpointModal({
   apiKey,
   podId,
   projectName,
+  rank,
   step,
   onClose,
 }: {
   apiKey: string;
   podId: string;
   projectName: string;
+  rank: number;
   step: number;
   onClose: () => void;
 }) {
@@ -59,6 +61,7 @@ export default function DownloadCheckpointModal({
           apiKey,
           podId,
           projectName,
+          rank,
           step,
         });
       } catch (e: any) {
