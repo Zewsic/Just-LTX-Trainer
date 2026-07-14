@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { invoke } from "@tauri-apps/api/core";
+import { open as openUrl } from "@tauri-apps/plugin-shell";
 import XTermPanel, { XTermHandle } from "./XTerm";
 import {
   initStepKey,
@@ -13,6 +14,15 @@ import { ProgressBar, StatusIcon } from "./ui";
 
 const STEPS = ["packages", "env", "model", "encoder", "verify"] as const;
 type StepId = (typeof STEPS)[number];
+
+// Гейтед-репозитории на HF, скачиваемые на соответствующих шагах — если
+// пользователь не принял лицензию под аккаунтом токена, hf download падает
+// с "Access denied. This repository requires approval."
+const GATED_REPO: Partial<Record<StepId, string>> = {
+  model: "Lightricks/LTX-2.3",
+  encoder: "google/gemma-3-12b-it-qat-q4_0-unquantized",
+};
+const GATED_ERROR_MARKERS = ["requires approval", "access denied"];
 
 export default function LtxInitProgress({
   apiKey,
@@ -128,6 +138,17 @@ export default function LtxInitProgress({
 
   const anyFailed = STEPS.some((s) => stepStatus(s).state === "failed");
 
+  const failedStep = STEPS.find((s) => stepStatus(s).state === "failed");
+  const gatedRepo = useMemo(() => {
+    if (!failedStep) return null;
+    const repo = GATED_REPO[failedStep];
+    if (!repo) return null;
+    const log = tasks.getLog(initStepKey(podId, failedStep)).toLowerCase();
+    const hit = GATED_ERROR_MARKERS.some((m) => log.includes(m));
+    return hit ? repo : null;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [failedStep, init]);
+
   async function start() {
     setError(null);
     if (anyFailed) {
@@ -229,6 +250,24 @@ export default function LtxInitProgress({
       {error && (
         <div className="text-xs text-red-500">
           <div className="font-mono whitespace-pre-wrap">{error}</div>
+        </div>
+      )}
+
+      {gatedRepo && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-xs space-y-1.5">
+          <div className="font-medium text-amber-600 dark:text-amber-400">
+            {t("init.gated_repo_title")}
+          </div>
+          <div className="text-neutral-600 dark:text-neutral-300">
+            {t("init.gated_repo_body", { repo: gatedRepo })}
+          </div>
+          <button
+            type="button"
+            onClick={() => openUrl(`https://huggingface.co/${gatedRepo}`)}
+            className="inline-block font-medium text-blue-600 dark:text-blue-400 hover:underline"
+          >
+            {t("init.gated_repo_link", { repo: gatedRepo })} ↗
+          </button>
         </div>
       )}
 

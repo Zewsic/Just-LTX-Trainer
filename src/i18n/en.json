@@ -305,7 +305,10 @@
     "in_progress": "Running…",
     "failed": "Failed",
     "notify_done_title": "Ready",
-    "notify_done_body": "«{{name}}» ready."
+    "notify_done_body": "«{{name}}» ready.",
+    "gated_repo_title": "Model license needs to be accepted on Hugging Face",
+    "gated_repo_body": "The {{repo}} repository is gated. Open the model page while signed in with the same Hugging Face account your token belongs to, click \"Agree and access repository\", then come back and press Retry.",
+    "gated_repo_link": "Open {{repo}} on Hugging Face"
   },
   "tr": {
     "title": "Training",

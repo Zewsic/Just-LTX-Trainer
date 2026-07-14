@@ -305,7 +305,10 @@
     "in_progress": "Идёт настройка…",
     "failed": "Ошибка",
     "notify_done_title": "Готов",
-    "notify_done_body": "«{{name}}» готов."
+    "notify_done_body": "«{{name}}» готов.",
+    "gated_repo_title": "Нужно принять лицензию модели на Hugging Face",
+    "gated_repo_body": "Репозиторий {{repo}} закрыт лицензией. Открой страницу модели под тем же аккаунтом Hugging Face, к которому привязан твой токен, нажми «Agree and access repository», затем вернись сюда и нажми «Повторить».",
+    "gated_repo_link": "Открыть {{repo}} на Hugging Face"
   },
   "tr": {
     "title": "Обучение",
