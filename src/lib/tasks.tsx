@@ -1332,31 +1332,40 @@ export function TasksProvider({ children }: { children: ReactNode }) {
                   // Обучение полностью и успешно завершилось (exit code 0).
                   // «Завершить сервер» — только один раз за прогон, и только
                   // после того как все файлы вплоть до последнего шага уже
-                  // сохранены локально (если save_results включён).
+                  // сохранены локально (если save_results включён). Не ждём
+                  // это здесь — иначе долгая докачка застопорит общий tick()
+                  // (и его 5s-интервал) для всех остальных подов/проектов.
+                  // Флаг ставим только при успехе pod_action, чтобы сбой
+                  // (сеть, протухший ключ) не «съел» единственную попытку —
+                  // следующий тик попробует остановить под ещё раз.
                   if (
                     proj.training.shutdown_after_training &&
                     !shutdownFiredRef.current.has(key)
                   ) {
                     shutdownFiredRef.current.add(key);
-                    if (proj.training.save_results !== false) {
-                      const rank = proj.training.rank ?? 32;
-                      await Promise.all(
-                        tr.validations_done.map((s) =>
-                          saveResultsForStep(ak, pod.id, proj.name, rank, s),
-                        ),
-                      );
-                    }
-                    try {
-                      await invoke("pod_action", {
-                        args: {
-                          api_key: ak,
-                          pod_id: pod.id,
-                          action: "stop",
-                        },
-                      });
-                    } catch {
-                      /* ignore */
-                    }
+                    void (async () => {
+                      try {
+                        if (proj.training.save_results !== false) {
+                          const rank = proj.training.rank ?? 32;
+                          await Promise.all(
+                            tr.validations_done.map((s) =>
+                              saveResultsForStep(ak, pod.id, proj.name, rank, s),
+                            ),
+                          );
+                        }
+                        await invoke("pod_action", {
+                          args: {
+                            api_key: ak,
+                            pod_id: pod.id,
+                            action: "stop",
+                          },
+                        });
+                      } catch {
+                        // не удалось остановить под — снимаем флаг, чтобы
+                        // следующий тик повторил попытку.
+                        shutdownFiredRef.current.delete(key);
+                      }
+                    })();
                   }
                 }
               } catch {

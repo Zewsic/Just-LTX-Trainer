@@ -1416,19 +1416,32 @@ pub async fn download_checkpoint_to_results(
     rank: u32,
     step: u32,
 ) -> Result<String, String> {
-    checkpoint_send_start(
-        app.clone(),
-        api_key.clone(),
-        pod_id.clone(),
-        project_name.clone(),
-        rank,
-        step,
-    )
-    .await?;
+    let stub = shell::download_stub(&project_name, rank, step);
+    let dest_dir = crate::projects::project_results_dir(&app, &project_name)?.join("checkpoints");
+    let dest = dest_dir.join(format!("{}.safetensors", stub));
+    if dest.exists() {
+        return Ok(dest.to_string_lossy().to_string());
+    }
 
     let (host, port) = resolve_pod_ssh_endpoint(&api_key, &pod_id).await?;
     let keys = collect_keys(&app);
     let task = send_task(&project_name, step);
+
+    // Не перезапускаем send, если он уже идёт (например, пользователь открыл
+    // модалку скачивания того же чекпоинта вручную) — просто подключаемся к
+    // уже стартовавшей tmux-сессии, чтобы не убить её на середине передачи.
+    let existing = task.state(&host, port, &keys).await?;
+    if existing.state != "running" {
+        checkpoint_send_start(
+            app.clone(),
+            api_key.clone(),
+            pod_id.clone(),
+            project_name.clone(),
+            rank,
+            step,
+        )
+        .await?;
+    }
 
     let code = loop {
         let st = task.state(&host, port, &keys).await?;
@@ -1447,7 +1460,6 @@ pub async fn download_checkpoint_to_results(
 
     let runpodctl = find_executable("runpodctl")
         .ok_or_else(|| "runpodctl не установлен локально".to_string())?;
-    let dest_dir = crate::projects::project_results_dir(&app, &project_name)?.join("checkpoints");
     std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
 
     let status = Command::new(&runpodctl)
@@ -1464,8 +1476,7 @@ pub async fn download_checkpoint_to_results(
     if !status.success() {
         return Err(format!("runpodctl receive exit: {}", status));
     }
-    let stub = shell::download_stub(&project_name, rank, step);
-    Ok(dest_dir.join(format!("{}.safetensors", stub)).to_string_lossy().to_string())
+    Ok(dest.to_string_lossy().to_string())
 }
 
 /// Скачивает один sample-файл (видео/картинку) валидации в

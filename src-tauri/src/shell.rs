@@ -30,6 +30,15 @@ pub fn safe_name(s: &str) -> String {
 /// Имя скачиваемого файла чекпоинта (без расширения):
 /// `<project, пробелы→дефисы>_<rank>rank_<steps>steps`.
 /// Например: `lexy-sexy_32rank_2000steps`.
+///
+/// Пробелы меняются на дефисы по конвенции; `/`/`\` дополнительно заменяются
+/// на `-`, иначе имя ломает построение пути (`cp`/`mkdir`) на удалённой
+/// стороне при project-именах со слэшем.
 pub fn download_stub(project: &str, rank: u32, steps: u32) -> String {
-    format!("{}_{}rank_{}steps", project.trim().replace(' ', "-"), rank, steps)
+    let name = project
+        .trim()
+        .replace(' ', "-")
+        .replace('/', "-")
+        .replace('\\', "-");
+    format!("{}_{}rank_{}steps", name, rank, steps)
 }
