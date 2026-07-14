@@ -8,7 +8,14 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 const STATE_DIR_BASE: &str = "/workspace/.ltx-init";
-pub const STEP_IDS: &[&str] = &["packages", "env", "model", "encoder", "verify"];
+pub const STEP_IDS: &[&str] = &[
+    "packages",
+    "env",
+    "model",
+    "encoder",
+    "telegram_bot_api",
+    "verify",
+];
 
 const PATH_SETUP: &str = r#"export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 [ -f "$HOME/.local/bin/env" ] && . "$HOME/.local/bin/env" || true
@@ -139,6 +146,80 @@ echo 'encoder: done'
     )
 }
 
+/// Локальный `telegram-bot-api` сервер (лимит файла 2 ГБ вместо 50 МБ у
+/// обычного Bot API) — нужен только если включена отправка чекпоинтов/
+/// генераций. Если выключена или не хватает параметров — шаг мгновенно
+/// завершается, не тратя время инициализации.
+fn telegram_bot_api_script(
+    tg_files_enabled: bool,
+    api_id: &str,
+    api_hash: &str,
+    tg_token: &str,
+    tg_chat: &str,
+) -> String {
+    if !tg_files_enabled
+        || api_id.trim().is_empty()
+        || api_hash.trim().is_empty()
+        || tg_token.trim().is_empty()
+    {
+        return r#"set -eu
+echo 'telegram_bot_api: skipped'
+"#
+        .to_string();
+    }
+    format!(
+        r#"set -eu
+{tg}
+API_ID={api_id_q}
+API_HASH={api_hash_q}
+if ! command -v telegram-bot-api >/dev/null 2>&1; then
+  echo '== installing telegram-bot-api =='
+  export DEBIAN_FRONTEND=noninteractive
+  apt-get update -qq || true
+  if ! apt-get install -y -qq telegram-bot-api; then
+    echo '== apt package unavailable, building telegram-bot-api from source =='
+    apt-get install -y -qq git cmake g++ make zlib1g-dev libssl-dev gperf php-cli
+    rm -rf /tmp/telegram-bot-api-build
+    git clone --recursive https://github.com/tdlib/telegram-bot-api.git /tmp/telegram-bot-api-build
+    cd /tmp/telegram-bot-api-build
+    mkdir -p build && cd build
+    cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX:PATH=/usr/local ..
+    cmake --build . --target install -j"$(nproc)"
+    cd /
+    rm -rf /tmp/telegram-bot-api-build
+  fi
+fi
+telegram-bot-api --version
+
+if ! pgrep -f 'telegram-bot-api --api-id' >/dev/null 2>&1; then
+  echo '== starting telegram-bot-api daemon =='
+  nohup telegram-bot-api --api-id="$API_ID" --api-hash="$API_HASH" --local --http-port=8081 \
+    > /var/log/telegram-bot-api.log 2>&1 &
+  disown
+fi
+
+echo '== waiting for telegram-bot-api to come up =='
+ok=0
+for i in $(seq 1 20); do
+  if curl -s -m 2 http://localhost:8081 >/dev/null 2>&1; then
+    ok=1
+    break
+  fi
+  sleep 1
+done
+if [ "$ok" != "1" ]; then
+  echo '== telegram-bot-api did not respond, log tail: =='
+  tail -n 50 /var/log/telegram-bot-api.log || true
+  exit 1
+fi
+echo 'telegram_bot_api: done'
+"#,
+        tg = tg_header(tg_token, tg_chat, "telegram_bot_api"),
+        api_id_q = shell::escape(api_id),
+        api_hash_q = shell::escape(api_hash),
+    )
+}
+
 fn verify_script(tg_token: &str, tg_chat: &str) -> String {
     format!(
         r#"set -eu
@@ -155,17 +236,24 @@ tg_notify "✅ Сервер готов к работе"
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn step_script(
     step: &str,
     hf_token: &str,
     tg_token: &str,
     tg_chat: &str,
+    tg_files_enabled: bool,
+    tg_api_id: &str,
+    tg_api_hash: &str,
 ) -> Result<String, String> {
     Ok(match step {
         "packages" => packages_script(tg_token, tg_chat),
         "env" => env_script(tg_token, tg_chat),
         "model" => model_script(hf_token, tg_token, tg_chat),
         "encoder" => encoder_script(hf_token, tg_token, tg_chat),
+        "telegram_bot_api" => {
+            telegram_bot_api_script(tg_files_enabled, tg_api_id, tg_api_hash, tg_token, tg_chat)
+        }
         "verify" => verify_script(tg_token, tg_chat),
         other => return Err(format!("unknown step: {}", other)),
     })
@@ -232,6 +320,14 @@ pub struct StartStepArgs {
     pub tg_bot_token: Option<String>,
     #[serde(default)]
     pub tg_chat_id: Option<String>,
+    /// Если включено (и заданы api_id/api_hash) — шаг `telegram_bot_api`
+    /// ставит и поднимает локальный Bot API сервер для отправки файлов.
+    #[serde(default)]
+    pub tg_files_enabled: bool,
+    #[serde(default)]
+    pub tg_api_id: Option<String>,
+    #[serde(default)]
+    pub tg_api_hash: Option<String>,
 }
 
 #[tauri::command]
@@ -245,7 +341,17 @@ pub async fn start_init_step(
     }
     let tg_token = args.tg_bot_token.unwrap_or_default();
     let tg_chat = args.tg_chat_id.unwrap_or_default();
-    let script = step_script(&args.step, &hf, &tg_token, &tg_chat)?;
+    let tg_api_id = args.tg_api_id.unwrap_or_default();
+    let tg_api_hash = args.tg_api_hash.unwrap_or_default();
+    let script = step_script(
+        &args.step,
+        &hf,
+        &tg_token,
+        &tg_chat,
+        args.tg_files_enabled,
+        &tg_api_id,
+        &tg_api_hash,
+    )?;
     let (host, port) = resolve_pod_ssh_endpoint(&args.api_key, &args.pod_id).await?;
     let keys = collect_keys(&app);
     step_task(&args.step)

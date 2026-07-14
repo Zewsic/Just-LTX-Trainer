@@ -57,6 +57,8 @@ export default function Settings() {
   const [tgListenError, setTgListenError] = useState<string | null>(null);
   const [tgEventsEnabled, setTgEventsEnabled] = useState(false);
   const [tgFilesEnabled, setTgFilesEnabled] = useState(false);
+  const [tgApiId, setTgApiId] = useState("");
+  const [tgApiHash, setTgApiHash] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -78,12 +80,16 @@ export default function Settings() {
       const tcl = (await store.get<string>("tg_chat_label")) ?? "";
       const tev = (await store.get<boolean>("tg_events_enabled")) ?? false;
       const tfl = (await store.get<boolean>("tg_files_enabled")) ?? false;
+      const tai = (await store.get<string>("tg_api_id")) ?? "";
+      const tah = (await store.get<string>("tg_api_hash")) ?? "";
       setTgToken(tt);
       if (tt && tu) setTgBotInfo({ username: tu, first_name: null });
       setTgChatId(tcid);
       setTgChatLabel(tcl);
       setTgEventsEnabled(tev);
       setTgFilesEnabled(tfl);
+      setTgApiId(tai);
+      setTgApiHash(tah);
     })();
   }, []);
 
@@ -132,6 +138,18 @@ export default function Settings() {
   async function setTelegramFilesEnabled(v: boolean) {
     setTgFilesEnabled(v);
     await store.set("tg_files_enabled", v);
+    await store.save();
+  }
+
+  async function saveTelegramApiId(v: string) {
+    setTgApiId(v);
+    await store.set("tg_api_id", v);
+    await store.save();
+  }
+
+  async function saveTelegramApiHash(v: string) {
+    setTgApiHash(v);
+    await store.set("tg_api_hash", v);
     await store.save();
   }
 
@@ -368,6 +386,36 @@ export default function Settings() {
                   </div>
                 </div>
               </label>
+
+              {tgFilesEnabled && (
+                <div className="pl-7 space-y-3">
+                  <Field
+                    label={t("settings.telegram.api_id")}
+                    hint={t("settings.telegram.api_id_hint")}
+                  >
+                    <Input
+                      value={tgApiId}
+                      onChange={(e) => saveTelegramApiId(e.target.value)}
+                      placeholder="123456"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </Field>
+                  <Field
+                    label={t("settings.telegram.api_hash")}
+                    hint={t("settings.telegram.api_hash_hint")}
+                  >
+                    <Input
+                      type="password"
+                      value={tgApiHash}
+                      onChange={(e) => saveTelegramApiHash(e.target.value)}
+                      placeholder="a1b2c3..."
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                  </Field>
+                </div>
+              )}
             </div>
           </div>
         </div>

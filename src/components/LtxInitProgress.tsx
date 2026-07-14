@@ -8,11 +8,18 @@ import {
   InitStepStatus,
   useTasks,
 } from "../lib/tasks";
-import { getTelegramNotifyArgs } from "../lib/pods";
+import { getTelegramFilesArgs, getTelegramNotifyArgs } from "../lib/pods";
 import { ProgressKind, parseProgress } from "../lib/progress";
 import { ProgressBar, StatusIcon } from "./ui";
 
-const STEPS = ["packages", "env", "model", "encoder", "verify"] as const;
+const STEPS = [
+  "packages",
+  "env",
+  "model",
+  "encoder",
+  "telegram_bot_api",
+  "verify",
+] as const;
 type StepId = (typeof STEPS)[number];
 
 export default function LtxInitProgress({
@@ -108,17 +115,31 @@ export default function LtxInitProgress({
     if (!firstPending) return;
     if (startedStepsRef.current.has(firstPending)) return;
     startedStepsRef.current.add(firstPending);
-    getTelegramNotifyArgs().then((tg) =>
-      invoke("start_init_step", {
-        args: {
-          api_key: apiKey,
-          pod_id: podId,
-          step: firstPending,
-          hf_token: hfToken,
-          ...tg,
-        },
-      }),
-    )
+    Promise.all([getTelegramNotifyArgs(), getTelegramFilesArgs()])
+      .then(([notify, files]) =>
+        invoke("start_init_step", {
+          args: {
+            api_key: apiKey,
+            pod_id: podId,
+            step: firstPending,
+            hf_token: hfToken,
+            ...notify,
+            ...files,
+          },
+        }).then(() => {
+          // Флаг ставим только если шаг реально что-то поставил
+          // (tg_files_enabled был true в момент запуска этого шага) — иначе
+          // шаг просто мгновенно пропустился.
+          if (firstPending === "telegram_bot_api" && files.tg_files_enabled) {
+            const next = tasks.managed.map((m) =>
+              m.id === podId
+                ? { ...m, telegram_bot_api_installed: true }
+                : m,
+            );
+            tasks.setManaged(next);
+          }
+        }),
+      )
       .catch((e) => {
         startedStepsRef.current.delete(firstPending);
         setError(String(e));

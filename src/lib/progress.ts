@@ -41,6 +41,7 @@ export type ProgressKind =
   | "init_env"
   | "init_model"
   | "init_encoder"
+  | "init_telegram_bot_api"
   | "init_verify"
   | "caption"
   | "test_caption"
