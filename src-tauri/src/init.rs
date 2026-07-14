@@ -23,10 +23,33 @@ fn step_task(step: &str) -> TmuxTask {
     task_at(STATE_DIR_BASE, "ltx_", step)
 }
 
-fn packages_script() -> String {
+/// Общий Telegram-хук для скриптов инициализации: `tg_notify()` + `trap`,
+/// который шлёт сообщение об ошибке при любом неуспешном выходе шага
+/// (скрипты идут под `set -eu`, так что `trap ... ERR` ловит первую же
+/// упавшую команду).
+fn tg_header(tg_token: &str, tg_chat: &str, step_label: &str) -> String {
+    format!(
+        r#"TG_TOKEN={tok}
+TG_CHAT_ID={chat}
+STEP_LABEL={label}
+tg_notify() {{
+  [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT_ID" ] || return 0
+  curl -s -m 10 -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+    --data-urlencode chat_id="$TG_CHAT_ID" --data-urlencode text="$1" >/dev/null 2>&1 || true
+}}
+trap 'tg_notify "❌ Ошибка инициализации сервера (шаг: $STEP_LABEL)"' ERR
+"#,
+        tok = shell::escape(tg_token),
+        chat = shell::escape(tg_chat),
+        label = shell::escape(step_label),
+    )
+}
+
+fn packages_script(tg_token: &str, tg_chat: &str) -> String {
     format!(
         r#"set -eu
 {path}
+{tg}
 echo '== checking existing tools =='
 if command -v uv >/dev/null 2>&1 && command -v ffmpeg >/dev/null 2>&1; then
   echo 'uv and ffmpeg already installed'
@@ -46,14 +69,16 @@ fi
 uv --version
 echo 'packages: done'
 "#,
-        path = PATH_SETUP
+        path = PATH_SETUP,
+        tg = tg_header(tg_token, tg_chat, "packages")
     )
 }
 
-fn env_script() -> String {
+fn env_script(tg_token: &str, tg_chat: &str) -> String {
     format!(
         r#"set -eu
 {path}
+{tg}
 cd /workspace
 if [ ! -d LTX-2 ]; then
   echo '== git clone Lightricks/LTX-2 =='
@@ -68,14 +93,16 @@ echo '== installing huggingface_hub CLI =='
 uv pip install -U huggingface_hub
 echo 'env: done'
 "#,
-        path = PATH_SETUP
+        path = PATH_SETUP,
+        tg = tg_header(tg_token, tg_chat, "env")
     )
 }
 
-fn model_script(hf_token: &str) -> String {
+fn model_script(hf_token: &str, tg_token: &str, tg_chat: &str) -> String {
     format!(
         r#"set -eu
 {path}
+{tg}
 cd /workspace/LTX-2
 . .venv/bin/activate
 mkdir -p /workspace/ckpt
@@ -87,14 +114,16 @@ hf download Lightricks/LTX-2.3 ltx-2.3-22b-dev.safetensors --local-dir .
 echo 'model: done'
 "#,
         path = PATH_SETUP,
-        tok = shell::escape(hf_token)
+        tok = shell::escape(hf_token),
+        tg = tg_header(tg_token, tg_chat, "model")
     )
 }
 
-fn encoder_script(hf_token: &str) -> String {
+fn encoder_script(hf_token: &str, tg_token: &str, tg_chat: &str) -> String {
     format!(
         r#"set -eu
 {path}
+{tg}
 cd /workspace/LTX-2
 . .venv/bin/activate
 cd /workspace/ckpt
@@ -105,28 +134,39 @@ hf download google/gemma-3-12b-it-qat-q4_0-unquantized --local-dir gemma-text-en
 echo 'encoder: done'
 "#,
         path = PATH_SETUP,
-        tok = shell::escape(hf_token)
+        tok = shell::escape(hf_token),
+        tg = tg_header(tg_token, tg_chat, "encoder")
     )
 }
 
-fn verify_script() -> &'static str {
-    r#"set -eu
+fn verify_script(tg_token: &str, tg_chat: &str) -> String {
+    format!(
+        r#"set -eu
+{tg}
 echo '== verifying =='
 test -f /workspace/ckpt/ltx-2.3-22b-dev.safetensors && echo 'ltx weights ok'
 test -d /workspace/ckpt/gemma-text-encoder && echo 'text encoder ok'
 test -d /workspace/LTX-2/.venv && echo 'venv ok'
 ls -lh /workspace/ckpt
 echo 'verify: done'
-"#
+tg_notify "✅ Сервер готов к работе"
+"#,
+        tg = tg_header(tg_token, tg_chat, "verify")
+    )
 }
 
-fn step_script(step: &str, hf_token: &str) -> Result<String, String> {
+fn step_script(
+    step: &str,
+    hf_token: &str,
+    tg_token: &str,
+    tg_chat: &str,
+) -> Result<String, String> {
     Ok(match step {
-        "packages" => packages_script(),
-        "env" => env_script(),
-        "model" => model_script(hf_token),
-        "encoder" => encoder_script(hf_token),
-        "verify" => verify_script().to_string(),
+        "packages" => packages_script(tg_token, tg_chat),
+        "env" => env_script(tg_token, tg_chat),
+        "model" => model_script(hf_token, tg_token, tg_chat),
+        "encoder" => encoder_script(hf_token, tg_token, tg_chat),
+        "verify" => verify_script(tg_token, tg_chat),
         other => return Err(format!("unknown step: {}", other)),
     })
 }
@@ -186,6 +226,12 @@ pub struct StartStepArgs {
     pub step: String,
     #[serde(default)]
     pub hf_token: Option<String>,
+    /// Если оба заданы — шаги инициализации шлют статус в Telegram
+    /// (готовность сервера / ошибка шага).
+    #[serde(default)]
+    pub tg_bot_token: Option<String>,
+    #[serde(default)]
+    pub tg_chat_id: Option<String>,
 }
 
 #[tauri::command]
@@ -197,7 +243,9 @@ pub async fn start_init_step(
     if matches!(args.step.as_str(), "model" | "encoder") && hf.trim().is_empty() {
         return Err("HuggingFace token is required for downloads".into());
     }
-    let script = step_script(&args.step, &hf)?;
+    let tg_token = args.tg_bot_token.unwrap_or_default();
+    let tg_chat = args.tg_chat_id.unwrap_or_default();
+    let script = step_script(&args.step, &hf, &tg_token, &tg_chat)?;
     let (host, port) = resolve_pod_ssh_endpoint(&args.api_key, &args.pod_id).await?;
     let keys = collect_keys(&app);
     step_task(&args.step)

@@ -8,6 +8,7 @@ import {
   InitStepStatus,
   useTasks,
 } from "../lib/tasks";
+import { getTelegramNotifyArgs } from "../lib/pods";
 import { ProgressKind, parseProgress } from "../lib/progress";
 import { ProgressBar, StatusIcon } from "./ui";
 
@@ -107,14 +108,17 @@ export default function LtxInitProgress({
     if (!firstPending) return;
     if (startedStepsRef.current.has(firstPending)) return;
     startedStepsRef.current.add(firstPending);
-    invoke("start_init_step", {
-      args: {
-        api_key: apiKey,
-        pod_id: podId,
-        step: firstPending,
-        hf_token: hfToken,
-      },
-    })
+    getTelegramNotifyArgs().then((tg) =>
+      invoke("start_init_step", {
+        args: {
+          api_key: apiKey,
+          pod_id: podId,
+          step: firstPending,
+          hf_token: hfToken,
+          ...tg,
+        },
+      }),
+    )
       .catch((e) => {
         startedStepsRef.current.delete(firstPending);
         setError(String(e));

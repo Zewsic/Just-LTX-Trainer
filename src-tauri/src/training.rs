@@ -157,6 +157,12 @@ pub struct StartTrainingArgs {
     /// Если задан — игнорируем UI-поля и шлём этот YAML как config.yaml.
     #[serde(default)]
     pub raw_config_yaml: Option<String>,
+    /// Telegram-токен бота и chat_id — если оба заданы, сервер будет слать
+    /// уведомления о старте/финише/ошибке обучения напрямую в Telegram.
+    #[serde(default)]
+    pub tg_bot_token: Option<String>,
+    #[serde(default)]
+    pub tg_chat_id: Option<String>,
 }
 
 #[tauri::command]
@@ -531,7 +537,22 @@ fn build_inner_script(args: &StartTrainingArgs) -> String {
         r#"set -eu
 {path}
 {expandable}
-emit() {{ printf 'LTX_%s\n' "$1"; }}
+TG_TOKEN={tg_token_q}
+TG_CHAT_ID={tg_chat_q}
+PROJECT_NAME={project_q}
+tg_notify() {{
+  [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT_ID" ] || return 0
+  text=""
+  case "$1" in
+    "PHASE: train") text="▶️ [$PROJECT_NAME] обучение началось" ;;
+    "PHASE: done") text="✅ [$PROJECT_NAME] обучение завершено" ;;
+    ERR:*) text="❌ [$PROJECT_NAME] ошибка: ${{1#ERR: }}" ;;
+    *) return 0 ;;
+  esac
+  curl -s -m 10 -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+    --data-urlencode chat_id="$TG_CHAT_ID" --data-urlencode text="$text" >/dev/null 2>&1 || true
+}}
+emit() {{ printf 'LTX_%s\n' "$1"; tg_notify "$1"; }}
 
 DATASET={dataset_q}
 TRIGGER={trigger_q}
@@ -742,6 +763,9 @@ emit "PHASE: done"
 "#,
         path = PATH_SETUP,
         expandable = expandable,
+        tg_token_q = shell::escape(args.tg_bot_token.as_deref().unwrap_or("")),
+        tg_chat_q = shell::escape(args.tg_chat_id.as_deref().unwrap_or("")),
+        project_q = shell::escape(&args.project_name),
         dataset_q = shell::escape(&dataset),
         dataset_captions_q = shell::escape(&format!("{}/captions.json", dataset)),
         trigger_q = shell::escape(&trigger),

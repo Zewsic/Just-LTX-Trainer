@@ -2,6 +2,21 @@ import { LazyStore } from "@tauri-apps/plugin-store";
 
 export const store = new LazyStore("settings.json");
 
+/// Если тумблер "Уведомлять о событиях" включён и чат привязан — отдаёт
+/// tg_bot_token/tg_chat_id для подмешивания в args команд start_training /
+/// start_init_step, иначе пустой объект (сервер просто не шлёт curl).
+export async function getTelegramNotifyArgs(): Promise<{
+  tg_bot_token?: string;
+  tg_chat_id?: string;
+}> {
+  const enabled = (await store.get<boolean>("tg_events_enabled")) ?? false;
+  if (!enabled) return {};
+  const token = (await store.get<string>("tg_bot_token")) ?? "";
+  const chatId = (await store.get<string>("tg_chat_id")) ?? "";
+  if (!token || !chatId) return {};
+  return { tg_bot_token: token, tg_chat_id: chatId };
+}
+
 export interface Pod {
   id: string;
   name: string;

@@ -11,6 +11,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import {
+  getTelegramNotifyArgs,
   loadManaged,
   ManagedPod,
   NvidiaInfo,
@@ -994,12 +995,14 @@ export function TasksProvider({ children }: { children: ReactNode }) {
               const startKey = `${pod.id}:${nextStep}`;
               if (!advancedInitRef.current.has(startKey)) {
                 advancedInitRef.current.add(startKey);
+                const tg = await getTelegramNotifyArgs();
                 invoke("start_init_step", {
                   args: {
                     api_key: ak,
                     pod_id: pod.id,
                     step: nextStep,
                     hf_token: hf,
+                    ...tg,
                   },
                 })
                   .catch(() => {
@@ -1543,6 +1546,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       trainingStatesRef.current.delete(stateKey);
       setTrainingStates(new Map(trainingStatesRef.current));
       try {
+        const tg = await getTelegramNotifyArgs();
         await invoke("start_training", {
           args: {
             api_key: args.api_key,
@@ -1562,6 +1566,7 @@ export function TasksProvider({ children }: { children: ReactNode }) {
             clip_count: args.clip_count,
             buckets: args.buckets,
             raw_config_yaml: args.raw_config_yaml ?? null,
+            ...tg,
           },
         });
         // Optimistic update: tmux уже стартовал, но настоящий poll прилетит
