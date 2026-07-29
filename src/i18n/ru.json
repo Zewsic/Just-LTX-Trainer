@@ -296,11 +296,13 @@
     "step_env": "Python-окружение",
     "step_model": "Веса LTX-2.3",
     "step_encoder": "Text encoder",
+    "step_telegram_bot_api": "Telegram Bot API",
     "step_verify": "Проверка",
     "eta_packages": "≈ 1 мин",
     "eta_env": "≈ 3 мин",
     "eta_model": "≈ 10 мин",
     "eta_encoder": "≈ 5 мин",
+    "eta_telegram_bot_api": "пропускается если выкл.",
     "eta_verify": "пара сек",
     "in_progress": "Идёт настройка…",
     "failed": "Ошибка",
@@ -450,6 +452,27 @@
     "valid": "ок",
     "invalid": "ошибка",
     "notifications": "Уведомления ОС",
-    "notifications_hint": "При завершении длинной задачи."
+    "notifications_hint": "При завершении длинной задачи.",
+    "notifications_os": "Операционная система",
+    "telegram": {
+      "title": "Telegram",
+      "token": "Токен бота",
+      "token_hint": "Получить у @BotFather.",
+      "check": "Проверить",
+      "token_valid": "Токен действителен",
+      "token_invalid": "Ошибка проверки",
+      "pick_chat": "Выбрать чат",
+      "reassign_chat": "Переназначить чат",
+      "waiting_start": "Отправьте /start вашему боту в Telegram…",
+      "chat_saved": "Чат сохранён",
+      "events_enabled": "Уведомлять о событиях",
+      "events_enabled_hint": "Сервер готов / обучение началось / завершилось / ошибка — шлётся напрямую с сервера, дублирует уведомления ОС по смыслу, но работает независимо от них.",
+      "files_enabled": "Присылать обученные checkpoint и результаты генераций",
+      "files_enabled_hint": "При инициализации на под ставится локальный Bot API сервер (лимит файла — 2 ГБ), и по мере обучения в Telegram улетает каждый чекпоинт и сэмпл валидации.",
+      "api_id": "API ID",
+      "api_id_hint": "С my.telegram.org — нужен локальному Bot API серверу.",
+      "api_hash": "API Hash",
+      "api_hash_hint": "С my.telegram.org, рядом с API ID."
+    }
   }
 }

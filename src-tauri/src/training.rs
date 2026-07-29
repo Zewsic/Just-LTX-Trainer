@@ -157,6 +157,18 @@ pub struct StartTrainingArgs {
     /// Если задан — игнорируем UI-поля и шлём этот YAML как config.yaml.
     #[serde(default)]
     pub raw_config_yaml: Option<String>,
+    /// Telegram-токен бота и chat_id — если оба заданы, сервер будет слать
+    /// уведомления о старте/финише/ошибке обучения напрямую в Telegram.
+    #[serde(default)]
+    pub tg_bot_token: Option<String>,
+    #[serde(default)]
+    pub tg_chat_id: Option<String>,
+    /// Если включено — во время обучения чекпоинты/сэмплы валидации
+    /// последовательно улетают в Telegram через локальный Bot API сервер
+    /// (см. `init.rs::telegram_bot_api_script`), должен быть уже поднят на
+    /// поде на порту 8081.
+    #[serde(default)]
+    pub tg_files_enabled: bool,
 }
 
 #[tauri::command]
@@ -506,6 +518,160 @@ fn format_f(f: f32) -> String {
     }
 }
 
+/// Фоновый вотчер, который во время обучения следит за
+/// `checkpoints/`/`samples/` и льёт новые файлы в Telegram через локальный
+/// `telegram-bot-api` (localhost:8081 — см. `init.rs::telegram_bot_api_script`):
+/// сперва чекпоинт документом, затем каждый относящийся к нему сэмпл —
+/// reply на сообщение с чекпоинтом (для i2v/both — медиагруппа
+/// входная-картинка+видео). Все параметры приходят через переменные
+/// окружения, HTTP — через `curl` subprocess (не полагаемся на `requests` в
+/// venv трейнера).
+const TG_FILE_WATCHER_PY: &str = r#"
+import glob, json, os, re, subprocess, time
+
+LOCAL_URL = os.environ["TG_LOCAL_URL"]
+CHAT_ID = os.environ["TG_CHAT_ID"]
+CKPT_DIR = os.environ["CHECKPOINTS_DIR"]
+SAMPLES_DIR = os.environ["SAMPLES_DIR"]
+IMAGES_DIR = os.environ["INPUT_IMAGES_DIR"]
+MODE = os.environ.get("MODE", "t2v")
+DONE_MARKER = os.environ["DONE_MARKER"]
+
+CKPT_RE = re.compile(r"^lora_weights_step_(\d+)\.safetensors$")
+SAMPLE_RE = re.compile(r"^step_(\d+)_(\d+)\.mp4$")
+GRACE_SECONDS = 30
+POLL_SECONDS = 5
+
+
+def stable_files(d, pattern):
+    """Файлы, чей размер не меняется между двумя опросами — уже дописаны."""
+    try:
+        names = sorted(os.listdir(d))
+    except OSError:
+        return {}
+    out = {}
+    for n in names:
+        if not pattern.match(n):
+            continue
+        p = os.path.join(d, n)
+        try:
+            s1 = os.path.getsize(p)
+            time.sleep(0.3)
+            s2 = os.path.getsize(p)
+        except OSError:
+            continue
+        if s1 == s2 and s1 > 0:
+            out[n] = p
+    return out
+
+
+def curl_json(args):
+    r = subprocess.run(
+        ["curl", "-s", "-m", "180"] + args,
+        capture_output=True,
+        text=True,
+    )
+    try:
+        return json.loads(r.stdout)
+    except Exception:
+        return {}
+
+
+def send_document(path, caption):
+    resp = curl_json(
+        [
+            "-F", "chat_id=" + CHAT_ID,
+            "-F", "caption=" + caption,
+            "-F", "document=@" + path,
+            LOCAL_URL + "/sendDocument",
+        ]
+    )
+    return resp.get("result", {}).get("message_id")
+
+
+def find_image(index):
+    for ext in ("jpg", "jpeg", "png", "webp"):
+        p = os.path.join(IMAGES_DIR, "img{}.{}".format(index, ext))
+        if os.path.exists(p):
+            return p
+    return None
+
+
+def send_sample(step, idx, path, reply_to):
+    caption = "step {} sample {}".format(step, idx)
+    img = find_image(idx) if MODE in ("i2v", "both") else None
+    if img and reply_to:
+        media = json.dumps(
+            [
+                {"type": "photo", "media": "attach://photo", "caption": caption},
+                {"type": "video", "media": "attach://video"},
+            ]
+        )
+        curl_json(
+            [
+                "-F", "chat_id=" + CHAT_ID,
+                "-F", "reply_to_message_id=" + str(reply_to),
+                "-F", "media=" + media,
+                "-F", "photo=@" + img,
+                "-F", "video=@" + path,
+                LOCAL_URL + "/sendMediaGroup",
+            ]
+        )
+        return
+    args = [
+        "-F", "chat_id=" + CHAT_ID,
+        "-F", "caption=" + caption,
+        "-F", "video=@" + path,
+        LOCAL_URL + "/sendVideo",
+    ]
+    if reply_to:
+        args = ["-F", "reply_to_message_id=" + str(reply_to)] + args
+    curl_json(args)
+
+
+sent_ckpts = {}
+sent_samples = set()
+done_since = None
+
+while True:
+    for name, path in stable_files(CKPT_DIR, CKPT_RE).items():
+        step = int(CKPT_RE.match(name).group(1))
+        if step in sent_ckpts:
+            continue
+        mid = send_document(path, "checkpoint step {}".format(step))
+        if mid:
+            sent_ckpts[step] = mid
+
+    pending = []
+    for name, path in stable_files(SAMPLES_DIR, SAMPLE_RE).items():
+        m = SAMPLE_RE.match(name)
+        step, idx = int(m.group(1)), int(m.group(2))
+        key = (step, idx)
+        if key in sent_samples:
+            continue
+        reply_to = sent_ckpts.get(step)
+        if reply_to is None:
+            pending.append((step, idx, path))
+            continue
+        send_sample(step, idx, path, reply_to)
+        sent_samples.add(key)
+
+    if done_since is None and os.path.exists(DONE_MARKER):
+        done_since = time.time()
+
+    if done_since is not None and (
+        not pending or time.time() - done_since > GRACE_SECONDS
+    ):
+        # Тренинг завершился — добиваем оставшееся, не дожидаясь чекпоинта,
+        # если его так и не появилось (шлём без reply).
+        for step, idx, path in pending:
+            send_sample(step, idx, path, sent_ckpts.get(step))
+            sent_samples.add((step, idx))
+        break
+
+    time.sleep(POLL_SECONDS)
+"#;
+
 fn build_inner_script(args: &StartTrainingArgs) -> String {
     let dataset = dataset_dir(&args.project_name);
     let trigger = normalize_trigger(args.trigger_word.as_deref().unwrap_or(""));
@@ -531,11 +697,31 @@ fn build_inner_script(args: &StartTrainingArgs) -> String {
         r#"set -eu
 {path}
 {expandable}
-emit() {{ printf 'LTX_%s\n' "$1"; }}
+TG_TOKEN={tg_token_q}
+TG_CHAT_ID={tg_chat_q}
+PROJECT_NAME={project_q}
+tg_notify() {{
+  [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT_ID" ] || return 0
+  text=""
+  case "$1" in
+    "PHASE: train") text="▶️ [$PROJECT_NAME] обучение началось" ;;
+    "PHASE: done") text="✅ [$PROJECT_NAME] обучение завершено" ;;
+    ERR:*) text="❌ [$PROJECT_NAME] ошибка: ${{1#ERR: }}" ;;
+    *) return 0 ;;
+  esac
+  curl -s -m 10 -X POST "https://api.telegram.org/bot$TG_TOKEN/sendMessage" \
+    --data-urlencode chat_id="$TG_CHAT_ID" --data-urlencode text="$text" >/dev/null 2>&1 || true
+}}
+emit() {{ printf 'LTX_%s\n' "$1"; tg_notify "$1"; }}
 
 DATASET={dataset_q}
 TRIGGER={trigger_q}
 RES="{res_human}"
+TG_FILES_ENABLED={tg_files_flag}
+MODE={mode_q}
+CHECKPOINTS_DIR={checkpoints_dir_q}
+SAMPLES_DIR={samples_dir_q}
+INPUT_IMAGES_DIR={input_images_dir_q}
 EXPECTED_CLIPS={expected}
 
 # ─── PHASE 1: prep ────────────────────────────────────────────────────────
@@ -692,6 +878,37 @@ nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,nohead
 
 # ─── PHASE 4: train ──────────────────────────────────────────────────────
 emit "PHASE: train"
+
+# Фоновый вотчер: льёт новые чекпоинты/сэмплы в Telegram по мере появления
+# (см. TG_FILE_WATCHER_PY). Работает параллельно с обучением, не блокируя его.
+TG_WATCHER_PID=""
+TG_DONE_MARKER=/tmp/ltx_tg_done_$$
+rm -f "$TG_DONE_MARKER"
+if [ "$TG_FILES_ENABLED" = "1" ] && [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT_ID" ]; then
+  TG_WATCHER_SCRIPT=/tmp/ltx_tg_watcher_$$.py
+  cat > "$TG_WATCHER_SCRIPT" <<'TG_WATCHER_EOF'
+{watcher_py}
+TG_WATCHER_EOF
+  TG_LOCAL_URL="http://localhost:8081/bot$TG_TOKEN" \
+  TG_CHAT_ID="$TG_CHAT_ID" \
+  CHECKPOINTS_DIR="$CHECKPOINTS_DIR" \
+  SAMPLES_DIR="$SAMPLES_DIR" \
+  INPUT_IMAGES_DIR="$INPUT_IMAGES_DIR" \
+  MODE="$MODE" \
+  DONE_MARKER="$TG_DONE_MARKER" \
+  python3 "$TG_WATCHER_SCRIPT" >> "$TMUX_LOG" 2>&1 &
+  TG_WATCHER_PID=$!
+fi
+stop_tg_watcher() {{
+  touch "$TG_DONE_MARKER"
+  [ -n "$TG_WATCHER_PID" ] || return 0
+  ( sleep 60 && kill "$TG_WATCHER_PID" 2>/dev/null ) &
+  local killer=$!
+  wait "$TG_WATCHER_PID" 2>/dev/null || true
+  kill "$killer" 2>/dev/null || true
+  rm -f "$TG_WATCHER_SCRIPT"
+}}
+
 TRAIN_SCRIPT=/tmp/ltx_train_$$.sh
 cat > "$TRAIN_SCRIPT" <<'INNER_EOF'
 #!/bin/bash
@@ -708,6 +925,7 @@ script -qfe -c "$TRAIN_SCRIPT" "$TR_TYPESCRIPT"
 TR_EC=$?
 set -e
 rm -f "$TRAIN_SCRIPT"
+stop_tg_watcher
 
 TR_LOG=$(mktemp)
 TR_TS_SIZE=$(wc -c < "$TR_TYPESCRIPT" 2>/dev/null || echo 0)
@@ -742,6 +960,15 @@ emit "PHASE: done"
 "#,
         path = PATH_SETUP,
         expandable = expandable,
+        tg_token_q = shell::escape(args.tg_bot_token.as_deref().unwrap_or("")),
+        tg_chat_q = shell::escape(args.tg_chat_id.as_deref().unwrap_or("")),
+        project_q = shell::escape(&args.project_name),
+        tg_files_flag = if args.tg_files_enabled { "1" } else { "0" },
+        mode_q = shell::escape(&args.mode),
+        checkpoints_dir_q = shell::escape(&checkpoints_dir(&args.project_name)),
+        samples_dir_q = shell::escape(&samples_dir(&args.project_name)),
+        input_images_dir_q = shell::escape(&input_images_dir(&args.project_name)),
+        watcher_py = TG_FILE_WATCHER_PY,
         dataset_q = shell::escape(&dataset),
         dataset_captions_q = shell::escape(&format!("{}/captions.json", dataset)),
         trigger_q = shell::escape(&trigger),
@@ -1593,4 +1820,3 @@ pub async fn runpodctl_receive_local(
     }
     Ok(downloads.to_string_lossy().to_string())
 }
-

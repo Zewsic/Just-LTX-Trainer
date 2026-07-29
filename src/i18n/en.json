@@ -296,11 +296,13 @@
     "step_env": "Python env",
     "step_model": "LTX-2.3 weights",
     "step_encoder": "Text encoder",
+    "step_telegram_bot_api": "Telegram Bot API",
     "step_verify": "Verify",
     "eta_packages": "≈ 1 min",
     "eta_env": "≈ 3 min",
     "eta_model": "≈ 10 min",
     "eta_encoder": "≈ 5 min",
+    "eta_telegram_bot_api": "skipped if off",
     "eta_verify": "few sec",
     "in_progress": "Running…",
     "failed": "Failed",
@@ -450,6 +452,27 @@
     "valid": "ok",
     "invalid": "error",
     "notifications": "OS notifications",
-    "notifications_hint": "When a long task finishes."
+    "notifications_hint": "When a long task finishes.",
+    "notifications_os": "Operating system",
+    "telegram": {
+      "title": "Telegram",
+      "token": "Bot token",
+      "token_hint": "From @BotFather.",
+      "check": "Check",
+      "token_valid": "Token valid",
+      "token_invalid": "Check failed",
+      "pick_chat": "Pick chat",
+      "reassign_chat": "Reassign chat",
+      "waiting_start": "Send /start to your bot in Telegram…",
+      "chat_saved": "Chat saved",
+      "events_enabled": "Notify on events",
+      "events_enabled_hint": "Server ready / training started / training finished / error — sent directly from the server, mirrors OS notifications but works independently of them.",
+      "files_enabled": "Send trained checkpoints and generation results",
+      "files_enabled_hint": "Installs a local Bot API server on the pod during init (up to 2GB per file) and sends each checkpoint and validation sample as training progresses.",
+      "api_id": "API ID",
+      "api_id_hint": "From my.telegram.org — required by the local Bot API server.",
+      "api_hash": "API Hash",
+      "api_hash_hint": "From my.telegram.org, next to API ID."
+    }
   }
 }
