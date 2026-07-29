@@ -914,6 +914,10 @@ function TrainingSettings({
         <Button
           onClick={async () => {
             setStartError(null);
+            if (tasks.isPodGenerateBusy(podId)) {
+              setStartError(t("tr.generate_busy_blocks_start"));
+              return;
+            }
             const finalCfg: TrainingConfig = {
               ...cfg,
               rank,

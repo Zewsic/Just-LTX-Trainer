@@ -1,9 +1,9 @@
 import { useTranslation } from "react-i18next";
 import { open as openShell } from "@tauri-apps/plugin-shell";
 
-export type Section = "servers" | "datasets" | "training" | "project" | "settings";
+export type Section = "servers" | "datasets" | "training" | "generate" | "project" | "settings";
 
-const top: Section[] = ["servers", "datasets", "training"];
+const top: Section[] = ["servers", "datasets", "training", "generate"];
 const bottom: Section[] = ["settings"];
 
 const icons: Record<Section, React.ReactNode> = {
@@ -36,6 +36,12 @@ const icons: Record<Section, React.ReactNode> = {
   project: (
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
       <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />
+    </svg>
+  ),
+  generate: (
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M18.4 5.6l-2.1 2.1M7.7 16.3l-2.1 2.1" />
+      <circle cx="12" cy="12" r="3" />
     </svg>
   ),
 };

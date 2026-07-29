@@ -33,8 +33,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 const STATE_DIR_BASE: &str = "/workspace/.ltx-train";
-const MODEL_PATH: &str = "/workspace/ckpt/ltx-2.3-22b-dev.safetensors";
-const TEXT_ENCODER_PATH: &str = "/workspace/ckpt/gemma-text-encoder";
+pub(crate) const MODEL_PATH: &str = "/workspace/ckpt/ltx-2.3-22b-dev.safetensors";
+pub(crate) const TEXT_ENCODER_PATH: &str = "/workspace/ckpt/gemma-text-encoder";
 
 fn project_task(project: &str) -> crate::tmux_task::TmuxTask {
     task_at(STATE_DIR_BASE, "ltx_train_", project)
@@ -52,7 +52,7 @@ fn samples_dir(project: &str) -> String {
     format!("{}/samples", output_dir(project))
 }
 
-fn checkpoints_dir(project: &str) -> String {
+pub(crate) fn checkpoints_dir(project: &str) -> String {
     format!("{}/checkpoints", output_dir(project))
 }
 
@@ -1359,7 +1359,7 @@ base64 -w 0 "{p}"
     Ok(out.chars().filter(|c| !c.is_whitespace()).collect())
 }
 
-fn mime_for_filename(filename: &str) -> String {
+pub(crate) fn mime_for_filename(filename: &str) -> String {
     let lower = filename.to_lowercase();
     if lower.ends_with(".mp4") {
         "video/mp4"

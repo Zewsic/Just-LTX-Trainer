@@ -15,6 +15,7 @@ mod dataset_build;
 mod dataset_upload;
 mod caption;
 mod training;
+mod generate;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -81,6 +82,11 @@ pub fn run() {
             training::download_sample_to_results,
             training::list_local_results,
             training::reveal_in_file_manager,
+            generate::generate_start,
+            generate::generate_state,
+            generate::generate_tail,
+            generate::generate_cancel,
+            generate::read_generate_output,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

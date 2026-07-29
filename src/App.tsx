@@ -5,6 +5,7 @@ import Servers from "./views/Servers";
 import ServerDetail from "./views/ServerDetail";
 import Datasets from "./views/Datasets";
 import Training from "./views/Training";
+import Generate from "./views/Generate";
 import Project from "./views/Project";
 import Settings from "./views/Settings";
 
@@ -67,6 +68,7 @@ export default function App() {
             <Datasets onGoTraining={() => setSection("training")} />
           )}
           {section === "training" && <Training target={trainingTarget} />}
+          {section === "generate" && <Generate />}
           {section === "project" && <Project />}
           {section === "settings" && <Settings />}
         </div>

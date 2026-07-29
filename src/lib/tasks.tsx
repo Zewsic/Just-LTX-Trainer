@@ -20,9 +20,11 @@ import {
   store,
 } from "./pods";
 import {
+  aspectToWh,
   checkLocalTools,
   installFfmpeg as invokeInstallFfmpeg,
   installRunpodctl as invokeInstallRunpodctl,
+  lengthToFrames,
   listProjects,
   loadProject,
   LocalTools,
@@ -153,6 +155,42 @@ export interface InstallState {
   log: string | null;
 }
 
+export type GenerateJobState =
+  | "pending"
+  | "uploading_image"
+  | "running"
+  | "done"
+  | "failed"
+  | "canceled";
+
+/** Один запрос на тестовую генерацию — живёт только в памяти (не в project.json). */
+export interface GenerateJob {
+  id: string;
+  podId: string;
+  podName: string;
+  projectName: string;
+  rank: number;
+  step: number;
+  loraWeight: number;
+  mode: "t2v" | "i2v";
+  prompt: string;
+  negativePrompt: string;
+  localImagePath: string | null;
+  seed: number;
+  aspectRatio: string;
+  lengthSeconds: number;
+  inferenceSteps: number;
+  state: GenerateJobState;
+  outputFile: string | null;
+  error: string | null;
+  createdAt: number;
+}
+
+export type NewGenerateJob = Omit<
+  GenerateJob,
+  "id" | "state" | "outputFile" | "error" | "createdAt"
+>;
+
 export interface TasksApi {
   // secrets
   apiKey: string | null;
@@ -266,6 +304,13 @@ export interface TasksApi {
     buckets: Array<[number, number, number]>;
   }) => Promise<string>;
   resetTraining: (pod_id: string, project: string) => Promise<void>;
+
+  // generate (ad-hoc inference queue, one in-flight job per pod)
+  generateQueue: GenerateJob[];
+  enqueueGenerate: (job: NewGenerateJob) => string;
+  cancelGenerate: (id: string) => Promise<void>;
+  isPodTrainingBusy: (pod_id: string) => boolean;
+  isPodGenerateBusy: (pod_id: string) => boolean;
 }
 
 const TasksContext = createContext<TasksApi | null>(null);
@@ -638,6 +683,74 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     Map<string, TrainingState>
   >(new Map());
   const trainingStatesRef = useRef<Map<string, TrainingState>>(new Map());
+
+  // ---- generate (ad-hoc inference queue)
+  const [generateQueue, setGenerateQueue] = useState<GenerateJob[]>([]);
+  const generateQueueRef = useRef<GenerateJob[]>([]);
+  const generateCounterRef = useRef(0);
+
+  const updateGenerateJob = useCallback(
+    (id: string, patch: Partial<GenerateJob>) => {
+      generateQueueRef.current = generateQueueRef.current.map((j) =>
+        j.id === id ? { ...j, ...patch } : j,
+      );
+      setGenerateQueue(generateQueueRef.current);
+    },
+    [],
+  );
+
+  const enqueueGenerate = useCallback((job: NewGenerateJob): string => {
+    generateCounterRef.current += 1;
+    const id = `${job.podId}:${Date.now()}:${generateCounterRef.current}`;
+    const full: GenerateJob = {
+      ...job,
+      id,
+      state: "pending",
+      outputFile: null,
+      error: null,
+      createdAt: Date.now(),
+    };
+    generateQueueRef.current = [...generateQueueRef.current, full];
+    setGenerateQueue(generateQueueRef.current);
+    return id;
+  }, []);
+
+  const cancelGenerate = useCallback(
+    async (id: string) => {
+      const job = generateQueueRef.current.find((j) => j.id === id);
+      if (!job) return;
+      if (job.state === "running" || job.state === "uploading_image") {
+        const ak = apiKeyRef.current;
+        if (ak) {
+          try {
+            await invoke("generate_cancel", { apiKey: ak, podId: job.podId });
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+      updateGenerateJob(id, { state: "canceled" });
+    },
+    [updateGenerateJob],
+  );
+
+  const isPodTrainingBusy = useCallback((pod_id: string) => {
+    for (const [key, st] of trainingStatesRef.current) {
+      if (key.startsWith(`${pod_id}:`) && st.state === "running") return true;
+    }
+    return false;
+  }, []);
+
+  const isPodGenerateBusy = useCallback((pod_id: string) => {
+    return generateQueueRef.current.some(
+      (j) =>
+        j.podId === pod_id &&
+        (j.state === "pending" ||
+          j.state === "uploading_image" ||
+          j.state === "running"),
+    );
+  }, []);
+
   // Чтобы не дублировать уведомления о завершении валидации, помним какие
   // checkpoint-step'ы уже «прозвенели».
   const validationsNotifiedRef = useRef<Map<string, Set<number>>>(new Map());
@@ -1376,6 +1489,83 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       );
       setTrainingStates(new Map(trainingStatesRef.current));
 
+      // GENERATE QUEUE (one in-flight job per pod; GPU is shared with training)
+      await Promise.all(
+        managedList.map(async (pod) => {
+          const jobs = generateQueueRef.current.filter(
+            (j) => j.podId === pod.id,
+          );
+          if (jobs.length === 0) return;
+          const active = jobs.find(
+            (j) => j.state === "running" || j.state === "uploading_image",
+          );
+          if (active) {
+            if (active.state !== "running") return; // ещё грузим картинку
+            try {
+              const st = await invoke<{ state: string }>("generate_state", {
+                apiKey: ak,
+                podId: pod.id,
+              });
+              if (st.state === "done") {
+                updateGenerateJob(active.id, {
+                  state: "done",
+                  outputFile: `gen_${active.id}.mp4`,
+                });
+              } else if (st.state === "failed") {
+                let lastLine = "generate failed";
+                try {
+                  const tail = await invoke<{ content: string }>(
+                    "generate_tail",
+                    { apiKey: ak, podId: pod.id, since: 0 },
+                  );
+                  const lines = tail.content
+                    .split(/\r?\n/)
+                    .map((l) => l.trim())
+                    .filter(Boolean);
+                  if (lines.length) lastLine = lines[lines.length - 1];
+                } catch {
+                  /* ignore */
+                }
+                updateGenerateJob(active.id, { state: "failed", error: lastLine });
+              }
+            } catch {
+              /* ignore */
+            }
+            return;
+          }
+          // Никакой job этого пода сейчас не выполняется — попробуем начать
+          // следующий в очереди, если под не занят обучением.
+          const pending = jobs.find((j) => j.state === "pending");
+          if (!pending) return;
+          if (isPodTrainingBusy(pod.id)) return; // подождём — training приоритетнее
+          updateGenerateJob(pending.id, { state: "uploading_image" });
+          try {
+            const [w, h] = aspectToWh(pending.aspectRatio);
+            await invoke("generate_start", {
+              args: {
+                api_key: ak,
+                pod_id: pod.id,
+                project_name: pending.projectName,
+                job_id: pending.id,
+                step: pending.step,
+                lora_weight: pending.loraWeight,
+                prompt: pending.prompt,
+                negative_prompt: pending.negativePrompt || null,
+                image_path: pending.localImagePath,
+                seed: pending.seed,
+                width: w,
+                height: h,
+                num_frames: lengthToFrames(pending.lengthSeconds),
+                num_inference_steps: pending.inferenceSteps,
+              },
+            });
+            updateGenerateJob(pending.id, { state: "running" });
+          } catch (e: any) {
+            updateGenerateJob(pending.id, { state: "failed", error: String(e) });
+          }
+        }),
+      );
+
       // local tasks
       for (const k of uploadingRef.current) {
         const [, pod_id, ...rest] = k.split(":");
@@ -1831,6 +2021,11 @@ export function TasksProvider({ children }: { children: ReactNode }) {
     startTraining,
     exportTrainingConfig,
     resetTraining,
+    generateQueue,
+    enqueueGenerate,
+    cancelGenerate,
+    isPodTrainingBusy,
+    isPodGenerateBusy,
   };
 
   return <TasksContext.Provider value={api}>{children}</TasksContext.Provider>;

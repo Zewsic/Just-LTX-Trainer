@@ -7,7 +7,8 @@
     "datasets": "Dataset",
     "training": "Training",
     "settings": "Settings",
-    "project": "Project"
+    "project": "Project",
+    "generate": "Generate"
   },
   "ds": {
     "title": "Dataset",
@@ -413,7 +414,8 @@
       "save_results_hint": "Auto-download every checkpoint and sample video locally as they're created during training.",
       "shutdown_after_training": "Shut down server after training completes",
       "shutdown_after_training_hint": "Stop the pod once training finishes successfully and every file up to the last step has been saved."
-    }
+    },
+    "generate_busy_blocks_start": "This pod has a generate job queued/running — cancel it or wait before starting training."
   },
   "settings": {
     "title": "Settings",
@@ -465,5 +467,43 @@
     "results_checkpoints": "{{n}} checkpoint(s)",
     "results_samples": "{{n}} sample video(s)",
     "results_open": "Open in file explorer"
+  },
+  "gen": {
+    "title": "Generate",
+    "server": "Server",
+    "project": "Project",
+    "training_busy_hint": "Training is running on this pod — generate is paused until it finishes.",
+    "generate_busy_hint": "A generate job is already queued/running on this pod.",
+    "checkpoint": "Checkpoint",
+    "no_checkpoints": "No trained checkpoints found for this project on this pod yet.",
+    "lora_weight": "LoRA weight",
+    "mode": "Mode",
+    "image": "Conditioning image",
+    "pick_image": "+ Pick image",
+    "prompt": "Prompt",
+    "prompt_placeholder": "Describe what to generate.",
+    "negative_prompt": "Negative prompt",
+    "aspect": "Aspect",
+    "length": "Length",
+    "seed": "Seed",
+    "inference_steps": "Inference steps",
+    "enqueue": "Add to queue",
+    "error_no_api_key": "Add a RunPod API key in Settings first.",
+    "error_missing_selection": "Pick a server, project and checkpoint step.",
+    "error_missing_prompt": "Prompt is empty.",
+    "error_missing_image": "i2v mode needs a conditioning image.",
+    "error_training_busy": "Training is running on this pod — wait for it to finish.",
+    "queue_title": "Queue",
+    "queue_empty": "No generate jobs yet.",
+    "view": "View",
+    "cancel": "Cancel",
+    "state": {
+      "pending": "queued",
+      "uploading_image": "uploading image",
+      "running": "generating",
+      "done": "done",
+      "failed": "failed",
+      "canceled": "canceled"
+    }
   }
 }
