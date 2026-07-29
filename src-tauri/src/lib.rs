@@ -16,6 +16,7 @@ mod dataset_upload;
 mod caption;
 mod training;
 mod generate;
+mod telegram;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,6 +25,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .manage(telegram::ChatListenGen::default())
         .invoke_handler(tauri::generate_handler![
             ssh::ssh_exec,
             ssh::pod_ssh_probe,
@@ -87,6 +89,8 @@ pub fn run() {
             generate::generate_tail,
             generate::generate_cancel,
             generate::read_generate_output,
+            telegram::telegram_validate_bot_token,
+            telegram::telegram_start_chat_listen,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

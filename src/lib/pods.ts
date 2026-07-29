@@ -2,6 +2,52 @@ import { LazyStore } from "@tauri-apps/plugin-store";
 
 export const store = new LazyStore("settings.json");
 
+/// Если тумблер "Уведомлять о событиях" включён и чат привязан — отдаёт
+/// tg_bot_token/tg_chat_id для подмешивания в args команд start_training /
+/// start_init_step, иначе пустой объект (сервер просто не шлёт curl).
+export async function getTelegramNotifyArgs(): Promise<{
+  tg_bot_token?: string;
+  tg_chat_id?: string;
+}> {
+  const enabled = (await store.get<boolean>("tg_events_enabled")) ?? false;
+  if (!enabled) return {};
+  const token = (await store.get<string>("tg_bot_token")) ?? "";
+  const chatId = (await store.get<string>("tg_chat_id")) ?? "";
+  if (!token || !chatId) return {};
+  return { tg_bot_token: token, tg_chat_id: chatId };
+}
+
+/// Аргументы для шага инициализации "telegram_bot_api" и для start_training,
+/// когда включена отправка чекпоинтов/генераций (`tg_files_enabled`).
+/// Объединяет tg_bot_token/tg_chat_id (нужны и для событий, и для файлов —
+/// один и тот же бот/чат) с api_id/api_hash (нужны только серверу
+/// telegram-bot-api) и самим флагом.
+export async function getTelegramFilesArgs(): Promise<{
+  tg_bot_token?: string;
+  tg_chat_id?: string;
+  tg_files_enabled: boolean;
+  tg_api_id?: string;
+  tg_api_hash?: string;
+}> {
+  // Токен/чат не зависят от тумблера "события" — тот же бот используется и
+  // для файлов, если тумблер "файлы" включён независимо от "событий".
+  const token = (await store.get<string>("tg_bot_token")) ?? "";
+  const chatId = (await store.get<string>("tg_chat_id")) ?? "";
+  const filesEnabled = (await store.get<boolean>("tg_files_enabled")) ?? false;
+  if (!filesEnabled || !token || !chatId) {
+    return { tg_files_enabled: false };
+  }
+  const apiId = (await store.get<string>("tg_api_id")) ?? "";
+  const apiHash = (await store.get<string>("tg_api_hash")) ?? "";
+  return {
+    tg_bot_token: token,
+    tg_chat_id: chatId,
+    tg_files_enabled: !!(apiId && apiHash),
+    tg_api_id: apiId,
+    tg_api_hash: apiHash,
+  };
+}
+
 export interface Pod {
   id: string;
   name: string;
@@ -18,6 +64,9 @@ export interface ManagedPod {
   ltx_state: string;
   created_at: number;
   gpu_type_id?: string;
+  /// Установлен и поднят ли на этом поде локальный telegram-bot-api сервер
+  /// (шаг инициализации "telegram_bot_api").
+  telegram_bot_api_installed?: boolean;
 }
 
 export interface SshProbe {
@@ -82,6 +131,7 @@ export function migrateManaged(raw: unknown): ManagedPod[] {
             ltx_state: x.ltx_state ?? "init",
             created_at: x.created_at ?? 0,
             gpu_type_id: x.gpu_type_id,
+            telegram_bot_api_installed: x.telegram_bot_api_installed,
           }
         : null,
     )

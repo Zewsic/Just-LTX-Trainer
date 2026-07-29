@@ -11,6 +11,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTranslation } from "react-i18next";
 import {
+  getTelegramFilesArgs,
+  getTelegramNotifyArgs,
   loadManaged,
   ManagedPod,
   NvidiaInfo,
@@ -406,7 +408,14 @@ export function useLiveProgress(
 // Constants & key helpers
 // ──────────────────────────────────────────────────────────────────────────
 
-const INIT_STEPS = ["packages", "env", "model", "encoder", "verify"] as const;
+const INIT_STEPS = [
+  "packages",
+  "env",
+  "model",
+  "encoder",
+  "telegram_bot_api",
+  "verify",
+] as const;
 const POLL_INTERVAL_MS = 5_000;
 const LOG_CAP = 200_000;
 
@@ -1172,14 +1181,31 @@ export function TasksProvider({ children }: { children: ReactNode }) {
               const startKey = `${pod.id}:${nextStep}`;
               if (!advancedInitRef.current.has(startKey)) {
                 advancedInitRef.current.add(startKey);
+                const [notifyTg, filesTg] = await Promise.all([
+                  getTelegramNotifyArgs(),
+                  getTelegramFilesArgs(),
+                ]);
                 invoke("start_init_step", {
                   args: {
                     api_key: ak,
                     pod_id: pod.id,
                     step: nextStep,
                     hf_token: hf,
+                    ...notifyTg,
+                    ...filesTg,
                   },
                 })
+                  .then(() => {
+                    if (nextStep === "telegram_bot_api" && filesTg.tg_files_enabled) {
+                      setManaged(
+                        managedList.map((m) =>
+                          m.id === pod.id
+                            ? { ...m, telegram_bot_api_installed: true }
+                            : m,
+                        ),
+                      );
+                    }
+                  })
                   .catch(() => {
                     advancedInitRef.current.delete(startKey);
                   })
@@ -1849,6 +1875,10 @@ export function TasksProvider({ children }: { children: ReactNode }) {
       trainingStatesRef.current.delete(stateKey);
       setTrainingStates(new Map(trainingStatesRef.current));
       try {
+        const [tg, tgFiles] = await Promise.all([
+          getTelegramNotifyArgs(),
+          getTelegramFilesArgs(),
+        ]);
         await invoke("start_training", {
           args: {
             api_key: args.api_key,
@@ -1868,6 +1898,8 @@ export function TasksProvider({ children }: { children: ReactNode }) {
             clip_count: args.clip_count,
             buckets: args.buckets,
             raw_config_yaml: args.raw_config_yaml ?? null,
+            ...tg,
+            tg_files_enabled: tgFiles.tg_files_enabled,
           },
         });
         // Optimistic update: tmux уже стартовал, но настоящий poll прилетит
