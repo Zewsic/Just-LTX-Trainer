@@ -43,6 +43,13 @@ pub struct TrainingConfig {
     #[serde(default)]
     pub expandable_segments: Option<bool>,
 
+    /// Автоматически скачивать локально все чекпоинты и sample-видео по мере создания.
+    #[serde(default)]
+    pub save_results: Option<bool>,
+    /// Остановить под, когда обучение полностью и успешно завершится.
+    #[serde(default)]
+    pub shutdown_after_training: Option<bool>,
+
     /// Если задан — отправляем этот YAML на под как config.yaml без пересборки
     /// из UI-полей. Использует только в обход TrainingSettings («raw mode»).
     #[serde(default)]
@@ -111,6 +118,16 @@ pub(crate) fn projects_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
     let dir = dir.join("projects");
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// Локальная папка с результатами обучения проекта: скачанные чекпоинты и
+/// sample-видео (`results/checkpoints`, `results/samples`), живёт рядом с
+/// `project.json` — доступна и после выключения пода.
+pub(crate) fn project_results_dir(app: &tauri::AppHandle, project_name: &str) -> Result<PathBuf, String> {
+    let dir = projects_dir(app)?.join(sanitize(project_name)).join("results");
+    fs::create_dir_all(dir.join("checkpoints")).map_err(|e| e.to_string())?;
+    fs::create_dir_all(dir.join("samples")).map_err(|e| e.to_string())?;
     Ok(dir)
 }
 

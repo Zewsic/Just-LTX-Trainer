@@ -6,7 +6,9 @@
     "servers": "Сервера",
     "datasets": "Датасет",
     "training": "Обучение",
-    "settings": "Настройки"
+    "settings": "Настройки",
+    "project": "Проект",
+    "generate": "Генерация"
   },
   "ds": {
     "title": "Датасет",
@@ -17,15 +19,6 @@
     "new_project_create": "Создать",
     "tab_prep": "Подготовка",
     "tab_upload": "Загрузка",
-    "tab_projects": "Проекты",
-    "projects": {
-      "title": "Проекты",
-      "hint": "Скрой ненужные проекты из дропдауна. Файлы на диске остаются.",
-      "empty": "Пока нет проектов.",
-      "current": "текущий",
-      "hide": "Скрыть",
-      "show": "Показать"
-    },
     "upload_soon": "",
     "upload": {
       "no_built": "Сначала собери датасет.",
@@ -124,7 +117,6 @@
       "ffmpeg_installing": "Ставим ffmpeg…",
       "ffmpeg_ok": "ffmpeg",
       "macos_only": "Только macOS.",
-
       "videos_title": "Исходники",
       "add_videos": "Добавить",
       "no_videos": "Пусто. Перетащи или добавь файлы.",
@@ -132,7 +124,6 @@
       "add_prompt": "+ промпт",
       "delete_prompt": "Без промпта",
       "delete_video": "Удалить",
-
       "prompt_modal_title": "{{name}}",
       "prompt_placeholder": "Опиши клип.",
       "prompt_save": "Сохранить",
@@ -141,7 +132,6 @@
       "bulk_prompt_title": "Один промпт на все клипы",
       "bulk_prompt_hint": "Заменит промпт у {{n}} клипа(ов). Пусто — очистит у всех.",
       "bulk_apply": "Применить ко всем",
-
       "settings_title": "Параметры",
       "aspect": "Соотношение",
       "length": "Длина",
@@ -157,7 +147,6 @@
       "audio": "Аудио",
       "audio_on": "Да",
       "audio_off": "Нет",
-
       "build": "Собрать",
       "build_running": "Сборка…",
       "build_failed": "Ошибка сборки",
@@ -258,7 +247,6 @@
     "cost": "$/час",
     "created": "Создан",
     "address": "Адрес",
-
     "section_setup": "Настройка LTX-2",
     "setup_intro": "Пакеты, окружение, веса. Всё по SSH.",
     "setup_start": "Запустить",
@@ -267,19 +255,16 @@
     "setup_done_hint": "Сервер готов к обучению.",
     "needs_hf": "Добавь HuggingFace-токен в Настройках.",
     "needs_ssh": "Ждём SSH…",
-
     "section_ssh": "Подключение",
     "ssh_ok": "SSH",
     "ssh_failed": "SSH недоступен",
     "ssh_waiting": "Ждём SSH",
-
     "section_gpu_live": "GPU",
     "live_loading": "nvidia-smi…",
     "vram": "VRAM",
     "power": "Мощность",
     "util": "Загрузка",
     "temp": "Темп.",
-
     "actions_start": "Запустить",
     "actions_stop": "Остановить",
     "actions_restart": "Перезапустить",
@@ -427,7 +412,15 @@
       "copy_code": "Скопировать",
       "copied": "Скопировано",
       "saved_to": "Готово: {{path}}"
-    }
+    },
+    "results_server": {
+      "title": "Результаты и сервер",
+      "save_results": "Сохранять результаты",
+      "save_results_hint": "Автоматически скачивать локально каждый чекпоинт и sample-видео по мере создания во время обучения.",
+      "shutdown_after_training": "Завершить работу сервера после завершения обучения",
+      "shutdown_after_training_hint": "Остановить под, когда обучение полностью и успешно завершится и все файлы вплоть до последнего шага будут сохранены."
+    },
+    "generate_busy_blocks_start": "На этом поде сейчас есть задача генерации в очереди/выполнении — отмени её или дождись завершения перед стартом обучения."
   },
   "settings": {
     "title": "Настройки",
@@ -455,6 +448,67 @@
     "valid": "ок",
     "invalid": "ошибка",
     "notifications": "Уведомления ОС",
+    "notifications_hint": "При завершении длинной задачи."
+  },
+  "proj": {
+    "title": "Проект",
+    "list_title": "Проекты",
+    "list_hint": "Архивируй ненужные проекты из выпадающего списка. Файлы на диске остаются.",
+    "empty": "Пока нет проектов.",
+    "current": "текущий",
+    "archive": "Архивировать",
+    "unarchive": "Разархивировать",
+    "detail_title": "Информация",
+    "detail_created": "Создан",
+    "detail_updated": "Обновлён",
+    "detail_clips": "Клипов",
+    "detail_rank": "Rank",
+    "detail_steps": "Шагов",
+    "detail_mode": "Режим",
+    "detail_no_training": "Обучение ещё не настроено.",
+    "results_title": "Результаты",
+    "results_hint": "Чекпоинты и sample-видео, сохранённые локально — доступны даже после выключения пода.",
+    "results_empty": "Локальных результатов пока нет. Включи «Сохранять результаты» во вкладке Обучение.",
+    "results_checkpoints": "{{n}} чекпоинт(ов)",
+    "results_samples": "{{n}} sample-видео",
+    "results_open": "Открыть в проводнике"
+  },
+  "gen": {
+    "title": "Генерация",
+    "server": "Сервер",
+    "project": "Проект",
+    "training_busy_hint": "На этом поде сейчас идёт обучение — генерация на паузе до его завершения.",
+    "generate_busy_hint": "На этом поде уже есть задача генерации в очереди/выполнении.",
+    "checkpoint": "Чекпоинт",
+    "no_checkpoints": "Для этого проекта на этом поде пока нет обученных чекпоинтов.",
+    "lora_weight": "Вес LoRA",
+    "mode": "Режим",
+    "image": "Картинка-условие",
+    "pick_image": "+ Выбрать картинку",
+    "prompt": "Промпт",
+    "prompt_placeholder": "Опиши, что сгенерировать.",
+    "negative_prompt": "Негативный промпт",
+    "aspect": "Соотношение сторон",
+    "length": "Длина",
+    "seed": "Seed",
+    "inference_steps": "Шаги инференса",
+    "enqueue": "Добавить в очередь",
+    "error_no_api_key": "Сначала добавь RunPod API-ключ в Настройках.",
+    "error_missing_selection": "Выбери сервер, проект и шаг чекпоинта.",
+    "error_missing_prompt": "Промпт пустой.",
+    "error_missing_image": "Для режима i2v нужна картинка-условие.",
+    "error_training_busy": "На этом поде сейчас идёт обучение — дождись завершения.",
+    "queue_title": "Очередь",
+    "queue_empty": "Пока нет задач генерации.",
+    "view": "Смотреть",
+    "cancel": "Отменить",
+    "state": {
+      "pending": "в очереди",
+      "uploading_image": "загрузка картинки",
+      "running": "генерация",
+      "done": "готово",
+      "failed": "ошибка",
+      "canceled": "отменено"
     "notifications_hint": "При завершении длинной задачи.",
     "notifications_os": "Операционная система",
     "telegram": {
@@ -469,9 +523,9 @@
       "waiting_start": "Отправьте /start вашему боту в Telegram…",
       "chat_saved": "Чат сохранён",
       "events_enabled": "Уведомлять о событиях",
-      "events_enabled_hint": "Сервер готов / обучение началось / завершилось / ошибка — шлётся напрямую с сервера, дублирует уведомления ОС по смыслу, но работает независимо от них.",
+      "events_enabled_hint": "Уведомлять о событиях",
       "files_enabled": "Присылать обученные checkpoint и результаты генераций",
-      "files_enabled_hint": "При инициализации на под ставится локальный Bot API сервер (лимит файла — 2 ГБ), и по мере обучения в Telegram улетает каждый чекпоинт и сэмпл валидации.",
+      "files_enabled_hint": "Присылать результаты обучения а также сами модели в Telegram.",
       "api_id": "API ID",
       "api_id_hint": "С my.telegram.org — нужен локальному Bot API серверу.",
       "api_hash": "API Hash",

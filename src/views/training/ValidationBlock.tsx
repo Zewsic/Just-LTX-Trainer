@@ -22,6 +22,7 @@ export default function ValidationBlock({
   apiKey,
   podId,
   projectName,
+  rank,
   completedSteps,
   prompts = [],
   trigger = "",
@@ -30,6 +31,8 @@ export default function ValidationBlock({
   apiKey: string;
   podId: string;
   projectName: string;
+  /** Rank LoRA — нужен для имени скачиваемого файла чекпоинта. */
+  rank: number;
   /** Шаги, на которых валидация уже завершилась — приходят из TrainingState. */
   completedSteps: number[];
   /** Оригинальные промпты валидации (без trigger). Сэмплы 1..N матчатся по индексу. */
@@ -233,6 +236,7 @@ export default function ValidationBlock({
           apiKey={apiKey}
           podId={podId}
           projectName={projectName}
+          rank={rank}
           step={activeStep}
           onClose={() => setDownloadOpen(false)}
         />

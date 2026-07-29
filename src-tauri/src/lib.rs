@@ -15,6 +15,7 @@ mod dataset_build;
 mod dataset_upload;
 mod caption;
 mod training;
+mod generate;
 mod telegram;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -79,6 +80,15 @@ pub fn run() {
             training::checkpoint_send_state,
             training::checkpoint_send_stop,
             training::runpodctl_receive_local,
+            training::download_checkpoint_to_results,
+            training::download_sample_to_results,
+            training::list_local_results,
+            training::reveal_in_file_manager,
+            generate::generate_start,
+            generate::generate_state,
+            generate::generate_tail,
+            generate::generate_cancel,
+            generate::read_generate_output,
             telegram::telegram_validate_bot_token,
             telegram::telegram_start_chat_listen,
         ])

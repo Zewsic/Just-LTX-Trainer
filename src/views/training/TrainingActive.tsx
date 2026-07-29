@@ -283,6 +283,7 @@ export default function TrainingActive({
         apiKey={apiKey}
         podId={podId}
         projectName={project.name}
+        rank={project.training.rank ?? 32}
         completedSteps={state.validations_done ?? []}
         prompts={cfg.validation_prompts ?? []}
         trigger={trigger}
