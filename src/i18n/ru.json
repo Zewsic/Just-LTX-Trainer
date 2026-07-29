@@ -448,7 +448,28 @@
     "valid": "ок",
     "invalid": "ошибка",
     "notifications": "Уведомления ОС",
-    "notifications_hint": "При завершении длинной задачи."
+    "notifications_hint": "При завершении длинной задачи.",
+    "notifications_os": "Операционная система",
+    "telegram": {
+      "title": "Telegram",
+      "token": "Токен бота",
+      "token_hint": "Получить у @BotFather.",
+      "check": "Проверить",
+      "token_valid": "Токен действителен",
+      "token_invalid": "Ошибка проверки",
+      "pick_chat": "Выбрать чат",
+      "reassign_chat": "Переназначить чат",
+      "waiting_start": "Отправьте /start вашему боту в Telegram…",
+      "chat_saved": "Чат сохранён",
+      "events_enabled": "Уведомлять о событиях",
+      "events_enabled_hint": "Уведомлять о событиях",
+      "files_enabled": "Присылать обученные checkpoint и результаты генераций",
+      "files_enabled_hint": "Присылать результаты обучения а также сами модели в Telegram.",
+      "api_id": "API ID",
+      "api_id_hint": "С my.telegram.org — нужен локальному Bot API серверу.",
+      "api_hash": "API Hash",
+      "api_hash_hint": "С my.telegram.org, рядом с API ID."
+    }
   },
   "proj": {
     "title": "Проект",
@@ -509,27 +530,6 @@
       "done": "готово",
       "failed": "ошибка",
       "canceled": "отменено"
-    "notifications_hint": "При завершении длинной задачи.",
-    "notifications_os": "Операционная система",
-    "telegram": {
-      "title": "Telegram",
-      "token": "Токен бота",
-      "token_hint": "Получить у @BotFather.",
-      "check": "Проверить",
-      "token_valid": "Токен действителен",
-      "token_invalid": "Ошибка проверки",
-      "pick_chat": "Выбрать чат",
-      "reassign_chat": "Переназначить чат",
-      "waiting_start": "Отправьте /start вашему боту в Telegram…",
-      "chat_saved": "Чат сохранён",
-      "events_enabled": "Уведомлять о событиях",
-      "events_enabled_hint": "Уведомлять о событиях",
-      "files_enabled": "Присылать обученные checkpoint и результаты генераций",
-      "files_enabled_hint": "Присылать результаты обучения а также сами модели в Telegram.",
-      "api_id": "API ID",
-      "api_id_hint": "С my.telegram.org — нужен локальному Bot API серверу.",
-      "api_hash": "API Hash",
-      "api_hash_hint": "С my.telegram.org, рядом с API ID."
     }
   }
 }

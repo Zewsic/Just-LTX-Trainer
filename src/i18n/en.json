@@ -448,7 +448,28 @@
     "valid": "ok",
     "invalid": "error",
     "notifications": "OS notifications",
-    "notifications_hint": "When a long task finishes."
+    "notifications_hint": "When a long task finishes.",
+    "notifications_os": "Operating system",
+    "telegram": {
+      "title": "Telegram",
+      "token": "Bot token",
+      "token_hint": "From @BotFather.",
+      "check": "Check",
+      "token_valid": "Token valid",
+      "token_invalid": "Check failed",
+      "pick_chat": "Pick chat",
+      "reassign_chat": "Reassign chat",
+      "waiting_start": "Send /start to your bot in Telegram…",
+      "chat_saved": "Chat saved",
+      "events_enabled": "Notify on events",
+      "events_enabled_hint": "Server ready / training started / training finished / error — sent directly from the server, mirrors OS notifications but works independently of them.",
+      "files_enabled": "Send trained checkpoints and generation results",
+      "files_enabled_hint": "Send a loras in telegram after training.",
+      "api_id": "API ID",
+      "api_id_hint": "From my.telegram.org — required by the local Bot API server.",
+      "api_hash": "API Hash",
+      "api_hash_hint": "From my.telegram.org, next to API ID."
+    }
   },
   "proj": {
     "title": "Project",
@@ -509,27 +530,6 @@
       "done": "done",
       "failed": "failed",
       "canceled": "canceled"
-    "notifications_hint": "When a long task finishes.",
-    "notifications_os": "Operating system",
-    "telegram": {
-      "title": "Telegram",
-      "token": "Bot token",
-      "token_hint": "From @BotFather.",
-      "check": "Check",
-      "token_valid": "Token valid",
-      "token_invalid": "Check failed",
-      "pick_chat": "Pick chat",
-      "reassign_chat": "Reassign chat",
-      "waiting_start": "Send /start to your bot in Telegram…",
-      "chat_saved": "Chat saved",
-      "events_enabled": "Notify on events",
-      "events_enabled_hint": "Server ready / training started / training finished / error — sent directly from the server, mirrors OS notifications but works independently of them.",
-      "files_enabled": "Send trained checkpoints and generation results",
-      "files_enabled_hint": "Send a loras in telegram after training.",
-      "api_id": "API ID",
-      "api_id_hint": "From my.telegram.org — required by the local Bot API server.",
-      "api_hash": "API Hash",
-      "api_hash_hint": "From my.telegram.org, next to API ID."
     }
   }
 }
