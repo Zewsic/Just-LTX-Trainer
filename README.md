@@ -4,7 +4,7 @@
 [![Release](https://github.com/zewsic/just-ltx-trainer/actions/workflows/release.yml/badge.svg)](https://github.com/zewsic/just-ltx-trainer/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Train a **LoRA on LTX 2.3** without touching a terminal. A desktop app that drives a rented RunPod GPU for you: drop in your videos, click through five screens, and walk away. Comes back with samples you can preview right in the window.
+Train a **LoRA on LTX 2.3** without touching a terminal. A desktop app that drives a rented RunPod GPU for you: drop in your videos, click through a few screens, and walk away. Comes back with samples you can preview right in the window.
 
 > If you've trained image LoRAs before but every video-LoRA tutorial sends you into a 12-tab rabbit hole of SSH, tmux, Python envs, and YAML — this is the shortcut.
 
@@ -24,9 +24,9 @@ That's it. No CUDA install, no Python, no `pip`. Everything heavy runs on the re
 
 ---
 
-## The five-screen tour
+## The screen tour
 
-The whole app is built around five tabs you walk through in order. Once a screen turns green you move to the next.
+The whole app is built around a handful of tabs you walk through in order — Servers, Dataset, Training, Generate, Project, Settings. Once a screen turns green you move to the next.
 
 ### 1. Settings — connect your accounts
 
@@ -39,6 +39,7 @@ Open Settings first. Paste:
 - **HuggingFace token** — for downloading LTX 2.3 the first time you set up a pod.
 - **Gemini API key** (optional) — only if you want Gemini Flash to caption clips.
 - **SSH** — click "Set up" once. The app generates a key, registers it in your RunPod account, and uses it for all future pods. You won't see SSH again after this.
+- **Telegram notifications** (optional) — add a bot token from [@BotFather](https://t.me/BotFather) plus an API ID/hash from [my.telegram.org](https://my.telegram.org), pick the chat to notify, and get pinged on server ready / training started / training finished / errors — and optionally have trained checkpoints and generation results sent straight to Telegram. Works even when the app is closed, since it's sent directly from the pod.
 
 ### 2. Servers — rent a GPU
 
@@ -119,6 +120,22 @@ Click any checkpoint to see the sample videos rendered at that step, next to the
 
 From the same validation panel, **Download** opens a one-step flow: the pod sends the checkpoint over `runpodctl`, you can either save it to your local Downloads folder or copy a transfer code and grab it from another machine.
 
+Turn on **Save results** on the Training tab and checkpoints and sample videos are pulled to your machine automatically as they land — no manual download step, and they're still there after the pod is shut down. Pair it with **auto-shutdown** to stop the pod itself the moment training finishes, so you stop paying for idle GPU time.
+
+### 8. Project — everything about one LoRA in one place
+
+<!-- SCREENSHOT: project tab -->
+![Project](docs/screenshots/project.png)
+
+The Project tab (bottom of the sidebar) lists every project you've created, with the current one marked. Click into one to see clip count, LoRA rank/steps/mode, and its locally saved **Results** — checkpoints and sample videos synced from the pod, playable and revealable in your file explorer even after the pod is gone. Archive projects you're done with; the files on disk are untouched.
+
+### 9. Generate — quick test renders from a trained checkpoint
+
+<!-- SCREENSHOT: generate tab -->
+![Generate](docs/screenshots/generate.png)
+
+Once you've got a checkpoint, use Generate to render one-off videos without leaving the app: pick the server, project and checkpoint step, set a prompt (and a conditioning image for i2v), and hit **Add to queue**. Jobs queue per-pod and run after any active training finishes; watch progress and open finished videos right from the queue.
+
 ---
 
 ## Tips
@@ -129,6 +146,7 @@ From the same validation panel, **Download** opens a one-step flow: the pod send
 - **OOM on training?** Turn on gradient checkpointing and 8-bit text encoder before lowering the rank.
 - **Mixed resolutions.** With No resize on, the trainer learns from all your aspect ratios at once — handy when your source footage isn't uniform.
 - **Batch training.** You can train multiples loras on same time on different pods.
+- **Gated HuggingFace models.** If pod setup fails with an access-denied error, your HF account needs to accept the model's license — the app links you straight to the model page when this happens.
 
 ---
 
